@@ -2,7 +2,7 @@
 
 This repository contains the code base for the dataset and the benchmark, DailyWildfireCAN, a dataset for daily wildfire spread prediction.
 
-![alt text](figures/Fig1_DailyWildfireCAN.pdf)
+![alt text](figures/Fig1_DailyWildfireCAN.png)
 ---
 
 ## 🛠️ Part 1 : Path Configuration (settings.py)
