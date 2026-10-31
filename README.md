@@ -1,9 +1,8 @@
 # DailyWildfireCAN: A Large-Scale Dataset for Daily Wildfire Spread in Canada
-[Currently under review]
 
 This repository contains the code base for the dataset and the benchmark, DailyWildfireCAN, a dataset for daily wildfire spread prediction.
 
-![alt text](figures/image.png)
+![alt text](figures/Fig1_DailyWildfireCAN.pdf)
 ---
 
 ## 🛠️ Part 1 : Path Configuration (settings.py)
