@@ -126,9 +126,13 @@ def get_advanced_dataloaders_with_branches(config: Config,
 
     train_dir = os.path.join(base_data_path, "train")
     val_dir = os.path.join(base_data_path, "val")
-    test_space_dir = os.path.join(base_data_path, "test_space")
-    test_time_dir = os.path.join(base_data_path, "test_time")
-    test_spacetime_dir = os.path.join(base_data_path, "test_spacetime")
+    test_time_dir = os.path.join(base_data_path, "test_easy")
+    test_space_dir = os.path.join(base_data_path, "test_medium")
+    test_spacetime_dir = os.path.join(base_data_path, "test_hard")
+
+    # test_space_dir = os.path.join(base_data_path, "test_space")
+    # test_time_dir = os.path.join(base_data_path, "test_time")
+    # test_spacetime_dir = os.path.join(base_data_path, "test_spacetime")
 
     # Pass the specialized feature lists into the dataset
     common_kwargs = {

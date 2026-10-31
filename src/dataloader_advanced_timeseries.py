@@ -18,41 +18,6 @@ class TimeSeriesFireDataset(Dataset):
         self.return_positions = return_positions
         self.return_sat_age = return_sat_age
         self.return_coords = return_coords
-
-        # # --- FEATURE CHANNEL SELECTION (Dropping 'hii') ---
-        # all_feature_names = [
-        #     # Dynamic (14)
-        #     'tmax', 'rh', 'ws', 'prec', 'u10', 'v10', 'evi', 'ndvi', 
-        #     's2_b02', 's2_b03', 's2_b04', 's2_b08', 's2_b11', 's2_b12',
-        #     # Static (8)
-        #     'dem', 'slope', 'aspect (sin)', 'aspect (cos)', 
-        #     'biomass', 'closure', 'prcb', 'prcc',
-        #     # Static between landcovers (9)
-        #     'height',
-        #     'prc_balsam_fir', 'prc_black_spruce', 'prc_douglas_fir', 'prc_jack_pine',
-        #     'prc_lodgepole_pine', 'prc_ponderosa_pine', 'prc_tamarack', 'prc_white_red_pine',
-        #     # CCRS Landcover (15)
-        #     'ccrs_1_needleleaf', 'ccrs_2_taiga_needleleaf', 'ccrs_5_broadleaf', 
-        #     'ccrs_6_mixed_forest', 'ccrs_8_shrubland', 'ccrs_10_grassland', 
-        #     'ccrs_11_polar_shrubland', 'ccrs_12_polar_grassland', 'ccrs_13_polar_barren', 
-        #     'ccrs_14_wetland', 'ccrs_15_cropland', 'ccrs_16_barren', 
-        #     'ccrs_17_urban', 'ccrs_18_water', 'ccrs_19_snow',
-        #     # Human Influence Index (1) -> DROPPED
-        #     'hii',
-        #     # Annual Disturbance (6)
-        #     'dist_1_wildfire', 'dist_2_harvesting', 'dist_3_other', 
-        #     'dist_4_water', 'dist_5_defoliation_harvest', 'dist_6_defoliation_all',
-        #     # Fire Masks (2)
-        #     'accumulated_mask', 'scaled_accumulated_mask'
-        # ]
-
-        # drop_feature_names = ['hii']
-        
-        # # Indices of channels to keep
-        # self.keep_indices = [
-        #     i for i, name in enumerate(all_feature_names) 
-        #     if name not in drop_feature_names
-        # ]
         
         # Sort files to ensure consistent, reproducible ordering across runs
         self.files = sorted([f for f in os.listdir(data_dir) if f.endswith('.npz')])
@@ -85,13 +50,6 @@ class TimeSeriesFireDataset(Dataset):
             if self.return_coords and 'coords' in data:
                 coords_np = data['coords']
                 has_coords = True
-
-        # # SLICE OUT DROPPED CHANNELS ('hii')
-        # # Checks whether x is 4D (Seq, Channels, H, W) or 3D (Channels, H, W)
-        # if x_np.ndim == 4:
-        #     x_np = x_np[:, self.keep_indices, :, :]
-        # elif x_np.ndim == 3:
-        #     x_np = x_np[self.keep_indices, :, :]
 
         # APPYING MAX_SIZE=1 HOLE FILLING TO THE MASK (remove noise pixels from projection)
         y_bool = y_np > 0 
@@ -136,9 +94,13 @@ def get_advanced_timeseries_dataloaders(
     # Define the paths to your precomputed splits
     train_dir = os.path.join(base_data_path, "train")
     val_dir = os.path.join(base_data_path, "val")
-    test_space_dir = os.path.join(base_data_path, "test_space")
-    test_time_dir = os.path.join(base_data_path, "test_time")
-    test_spacetime_dir = os.path.join(base_data_path, "test_spacetime")
+    test_time_dir = os.path.join(base_data_path, "test_easy")
+    test_space_dir = os.path.join(base_data_path, "test_medium")
+    test_spacetime_dir = os.path.join(base_data_path, "test_hard")
+    
+    # test_space_dir = os.path.join(base_data_path, "test_space")
+    # test_time_dir = os.path.join(base_data_path, "test_time")
+    # test_spacetime_dir = os.path.join(base_data_path, "test_spacetime")
 
     dataset_kwargs = {
         "return_positions": return_positions,
@@ -229,7 +191,7 @@ if __name__ == "__main__":
     config = Config()
     
     # Call your actual function with flags enabled
-    train_loader, val_loader, _, _, _ = get_timeseries_dataloaders(
+    train_loader, val_loader, _, _, _ = get_advanced_timeseries_dataloaders(
         config=config,
         return_positions=True,
         return_sat_age=False,

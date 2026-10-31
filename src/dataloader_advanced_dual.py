@@ -151,9 +151,13 @@ def get_advanced_dual_dataloaders(config: Config,
     # Define the paths to the precomputed splits
     train_dir = os.path.join(base_data_path, "train")
     val_dir = os.path.join(base_data_path, "val")
-    test_space_dir = os.path.join(base_data_path, "test_space")
-    test_time_dir = os.path.join(base_data_path, "test_time")
-    test_spacetime_dir = os.path.join(base_data_path, "test_spacetime")
+    test_time_dir = os.path.join(base_data_path, "test_easy")
+    test_space_dir = os.path.join(base_data_path, "test_medium")
+    test_spacetime_dir = os.path.join(base_data_path, "test_hard")
+    
+    # test_space_dir = os.path.join(base_data_path, "test_space")
+    # test_time_dir = os.path.join(base_data_path, "test_time")
+    # test_spacetime_dir = os.path.join(base_data_path, "test_spacetime")
 
     # Refactor dataset arguments
     dataset_kwargs = {
