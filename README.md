@@ -44,8 +44,8 @@ This is the final data preparation step before model training. At this stage, yo
 
 ### Option 1: Use Pre-compiled Samples (Recommended)
 If you want to skip the data generation process and jump straight to training, you can use our finalized samples.
-Samples can be downloaded from [here](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN-v1/tree/main/data_samples)
-Place them inside the `SAMPLES` folder defined in your `settings.py`, following this exact structure:
+Mono- and multi-temporal samples can be downloaded from [here](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN-v1/tree/main/data_samples)
+Place them inside the `SAMPLE_FOLDER_ADVANCED` (or `TIMESERIES_SAMPLE_FOLDER_ADVANCED`) defined in your `settings.py`, following this exact structure:
 ```text
 SAMPLES/
    ├── train/
