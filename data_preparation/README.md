@@ -38,6 +38,17 @@ Before running any scripts, open configs/settings.py. This file acts as the cent
 
 ** Note on Folder Creation:** You only need to manually set up the directories containing the downloaded raw data (like `ERA5/`, `SCANFI/`, etc.). As soon as you run any script in this project, `settings.py` will automatically create the entire required `OUTPUT_FOLDER` structure (including the DEM, Satellite Status, and Metadata directories) if they do not already exist.
 
+### 1.4 Configuration Settings
+
+If you want to customize the data generation process for your own specific needs, all the global variables are stored in a central settings file located at:
+`data_configs/data_settings.py`
+
+In this file, you can easily adjust:
+* **Feature Selection:** Add or remove specific dynamic, static, or Sentinel bands.
+* **API Settings:** Change maximum retries, wait times, or parallel worker counts.
+* **Sentinel Thresholds:** Adjust the maximum allowed cloud coverage or lookback windows for satellite imagery.
+* **Coordinate Systems:** Update the target CRS projections if mapping to a different standard.
+
 ---
 
 ## Part 2: Environment Setup

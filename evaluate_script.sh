@@ -10,7 +10,7 @@
 
 # Load environment
 module load python/3.10
-source /PATH/TO/VENV
+source /PATH/TO/VENV/bin/activate
 
 cd /PATH/TO/PROJECT/FOLDER
 

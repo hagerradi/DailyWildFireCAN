@@ -3,6 +3,7 @@ import argparse
 from src.config import Config
 from samples_generation.data_generator import generate_simple_offline_data
 from samples_generation.data_generator_timeseries import generate_timeseries_offline_data
+from samples_generation.samples_configs.samples_settings import SEQUENCE_LENGTH
 
 def main():
     parser = argparse.ArgumentParser(description="Offline Data Generator for Wildfire Preprocessing")
@@ -31,7 +32,7 @@ def main():
         
     elif args.type == "timeseries":
         print("Starting offline data generation for TIME-SERIES dataset...")
-        generate_timeseries_offline_data(config, seq_length=3)
+        generate_timeseries_offline_data(config, seq_length=SEQUENCE_LENGTH)
 
 
 if __name__ == "__main__":

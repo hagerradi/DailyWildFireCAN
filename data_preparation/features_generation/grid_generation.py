@@ -6,6 +6,7 @@ from timezonefinder import TimezoneFinder
 import pytz
 from datetime import datetime, timedelta
 import h5py
+from data_preparation.data_configs.data_settings import DEG_CRS, DEG_NAD_CRS, METER_NAD_CRS
 
 def local_to_utc(row, tf, lon_col, lat_col):
     """
@@ -105,7 +106,8 @@ def generate_fire_h5(df, fire_id, output_folder, grid_size=256, pixel_size=90,
     tile_span_m = grid_size * pixel_size
 
     # Setup Transformers & Tools
-    transformer = Transformer.from_crs("EPSG:3347", "EPSG:4269", always_xy=True)
+    # transformer = Transformer.from_crs("EPSG:3347", "EPSG:4269", always_xy=True)
+    transformer = Transformer.from_crs(f"EPSG:{METER_NAD_CRS}", f"EPSG:{DEG_NAD_CRS}", always_xy=True)
     tf = TimezoneFinder()
     
     file_path = os.path.join(output_folder, f"fire_{fire_id}.h5")
@@ -118,8 +120,8 @@ def generate_fire_h5(df, fire_id, output_folder, grid_size=256, pixel_size=90,
         f.attrs["fire_id"] = fire_id
         f.attrs["year"] = int(fire_df["year"].unique()[0])
         f.attrs["pixel_size"] = pixel_size
-        f.attrs["meter_crs"] = "EPSG:3347"
-        f.attrs["deg_crs"] = "EPSG:4269"
+        f.attrs["meter_crs"] = f"EPSG:{METER_NAD_CRS}"
+        f.attrs["deg_crs"] = f"EPSG:{DEG_NAD_CRS}"
 
         # Group by Unique Tiles
         for (t_col, t_row), tile_df in fire_df.groupby(['tile_col', 'tile_row']):

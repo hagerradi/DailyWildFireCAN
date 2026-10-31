@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 from torch.utils.data import Dataset
+import torch.nn.functional as F
 import os
 import h5py
 import numpy as np
@@ -17,14 +18,19 @@ from samples_generation.data_generator_helper import create_stratified_splits, c
 
 from configs import settings
 
+from samples_generation.samples_configs.samples_settings import DYNAMIC_FEATURES, STATIC_FEATURES, TARGET_YEARS, RANDOM_SEED, REMOVE_MISSING_DATA
+
 class H5FireSimpleDataset(Dataset):
-    """ """
     
     def __init__(self, h5_dir, id_list, mapper, dynamic_features, static_features=None, 
                  fire_feature='firearea', patch_size=256, 
                  use_cumuarea_prev=False, use_cumuarea=False, transform=None,
                  normalize=False, stats_dict=None, sat_nodata=0, 
-                 use_cyclical_aspect=False, return_sat_age=False):
+                 use_cyclical_aspect=False, 
+                 return_sat_age=False, 
+                 return_coords=False,
+                 return_date=True,
+                 remove_missing_data=False):
         
         self.h5_dir = h5_dir
         self.id_list = [str(fid) for fid in id_list] 
@@ -40,13 +46,19 @@ class H5FireSimpleDataset(Dataset):
         self.use_cumuarea = use_cumuarea            
         self.transform = transform
 
-        # --- NORMALIZATION PARAMS ---
+        # Normalization params
         self.normalize = normalize
         self.stats_dict = stats_dict
         self.sat_nodata = sat_nodata
         
         self.use_cyclical_aspect = use_cyclical_aspect
         self.return_sat_age = return_sat_age
+        self.return_date = return_date
+
+        self.return_coords = return_coords
+        self.center_idx = (self.patch_size // 2) - 1
+
+        self.remove_missing_data = remove_missing_data
         
         # Safety check
         if self.normalize and self.stats_dict is None:
@@ -59,16 +71,38 @@ class H5FireSimpleDataset(Dataset):
         if self.use_cyclical_aspect and 'aspect' in self.static_features:
             base_channels += 1
 
+        # SCANFI: 1 string becomes 8 channels, so we add 7 net channels
+        if 'landcover' in self.static_features:
+            base_channels += 7
+            
+        # CCRS: 1 string becomes 15 channels, so we add 14 net channels
+        if 'ccrs_landcover' in self.static_features:
+            base_channels += 14
+
+        # Annual CCRS: 1 string becomes 15 channels, so we add 14 net channels
+        if 'annual_ccrs_landcover' in self.static_features:
+            base_channels += 14
+        
+        # Annual Disturbance: 1 string becomes 6 channels (classes 1-6, dropping 0), so add 5 net channels
+        if 'annual_disturbance' in self.static_features:
+            base_channels += 5
+
         self.num_channels = base_channels
+
+        # Maps the raw CCRS values (1-19) to continuous indices (0-14).
+        # We map everything else (including 0 NoData) to index 15.
+        self.ccrs_mapping = torch.full((256,), 15, dtype=torch.long)
+        valid_ccrs_classes = [1, 2, 5, 6, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+        for idx, class_val in enumerate(valid_ccrs_classes):
+            self.ccrs_mapping[class_val] = idx
         
         self.samples = [] 
-        # self.open_h5_handles = {}
         self.open_h5_handles = OrderedDict()
         self.max_open_files = 700
         
         self._index_files()
 
-    # --- HELPER METHODS ---
+    # Helper Methods
     def _get_expected_date(self, day_group) -> str | None:
         """Extracts the fire day date.
 
@@ -199,23 +233,39 @@ class H5FireSimpleDataset(Dataset):
                 with h5py.File(file_path, 'r') as f:
                     curr_day_group = f[f"{tile_id}/days/{primary_fire['day_key']}"]
                     
-                    # --- SIZE CHECK ---
+                    # SIZE CHECK
                     sample_feat = list(curr_day_group['features'].keys())[0]
                     h, w = curr_day_group[f'features/{sample_feat}'].shape
                     if h != self.patch_size or w != self.patch_size:
                         continue 
                         
-                    # ========================================================
                     # QUALITY MASK CHECK
-                    # ========================================================
-                    if "quality_mask" in curr_day_group:
+                    if self.remove_missing_data and "quality_mask" in curr_day_group:
                         continue
 
-                    # --- CALCULATE SAT AGE ---
+                    # EXTRACT THE FIRE DATE
+                    exp_date_str = self._get_expected_date(curr_day_group)
+
+                    date_arr = [0, 0, 0] # Default fallback
+                    if exp_date_str:
+                        try:
+                            dt = datetime.strptime(exp_date_str, "%Y-%m-%d")
+                            date_arr = [dt.year, dt.month, dt.day]
+                        except Exception:
+                            pass
+
+                    # CALCULATE SAT AGE
                     delta_t_days = 0.0
                     if self.return_sat_age:
-                        exp_date_str = self._get_expected_date(curr_day_group)
+                        # exp_date_str = self._get_expected_date(curr_day_group)
                         delta_t_days = self._get_sat_age_days(curr_day_group, exp_date_str)
+
+                    # EXTRACT COORDS 
+                    center_lon, center_lat = 0.0, 0.0
+                    if self.return_coords:
+                        if f"{tile_id}/coords/theoretical_lon" in f:
+                            center_lon = f[f"{tile_id}/coords/theoretical_lon"][self.center_idx, self.center_idx]
+                            center_lat = f[f"{tile_id}/coords/theoretical_lat"][self.center_idx, self.center_idx]
                         
                     fireday = curr_day_group.attrs.get('fireday', -1)
                         
@@ -237,6 +287,7 @@ class H5FireSimpleDataset(Dataset):
                 'tile_id': tile_id,
                 'dob': dob,
                 'year': year,
+                'fire_date': date_arr,
                 'curr_fires': curr_fires,      # List of all overlapping fires for TODAY
                 'next_fires': next_fires,      # List of all overlapping fires for TOMORROW
                 'primary_fire_id': primary_fire['fire_id'],
@@ -245,7 +296,9 @@ class H5FireSimpleDataset(Dataset):
                 'fireday': fireday,
                 'feature_paths': feature_paths, 
                 'is_sat_flags': is_sat_flags,
-                'delta_t': delta_t_days
+                'delta_t': delta_t_days,
+                'center_lon': center_lon,
+                'center_lat': center_lat
             })
 
     def __len__(self):
@@ -255,7 +308,7 @@ class H5FireSimpleDataset(Dataset):
         s = self.samples[idx]
         tile_id = s['tile_id']
         
-        # Pre-allocate input tensor with ZEROS safely
+        # Pre-allocate input tensor with zeros safely
         x_tensor = torch.zeros((self.num_channels, self.patch_size, self.patch_size), dtype=torch.float32)
         
         # Load Environment from PRIMARY Fire (Because Topo/Weather/Sat are identical)
@@ -265,40 +318,141 @@ class H5FireSimpleDataset(Dataset):
         
         # Load Dynamics & Satellite
         for path, is_sat in zip(s['feature_paths'], s['is_sat_flags']):
+            
             feat_name = path.split('/')[-1]
+                    
             arr_patch = curr_day_group[path][:].astype(np.float32)
             
             if is_sat:
-                # arr_patch = np.ascontiguousarray(np.flipud(arr_patch))
                 
                 if np.isnan(self.sat_nodata):
                     valid_mask = ~np.isnan(arr_patch)
                 else:
                     valid_mask = (arr_patch != self.sat_nodata)
-                
-                if 'SCL' not in feat_name:
+
+                if 'scl' not in feat_name.lower() and 'visual' not in feat_name.lower():
                     arr_patch = arr_patch * 0.0001
-                else:
-                    arr_patch = arr_patch * 0.1
             else:
                 valid_mask = ~np.isnan(arr_patch)
             
-            # --- NORMALIZATION LOGIC ---
+            # NORMALIZATION LOGIC
             if self.normalize and feat_name in self.stats_dict and feat_name != self.fire_feature and not is_sat:
                 if feat_name not in ['ndvi', 'evi']:
                     mean = self.stats_dict[feat_name]['mean']
                     std = self.stats_dict[feat_name]['std']
                     arr_patch[valid_mask] = (arr_patch[valid_mask] - mean) / std
+            
+            # NORMALIZATION LOGIC (SCL and visual)
+            if self.normalize and feat_name in self.stats_dict and feat_name != self.fire_feature and is_sat:
+                
+                if 'scl' in feat_name.lower():
+                    feat_max = self.stats_dict[feat_name]['max']
+                    feat_min = self.stats_dict[feat_name]['min']
+                    
+                    # Prevent division by zero if an array is completely uniform
+                    if feat_max > feat_min:
+                        arr_patch[valid_mask] = (arr_patch[valid_mask] - feat_min) / (feat_max - feat_min)
+                    else:
+                        arr_patch[valid_mask] = 0.0
+
+                if 'visual' in feat_name.lower():
+                    feat_max = self.stats_dict[feat_name]['max']
+                    feat_min = self.stats_dict[feat_name]['min']
+                    
+                    # Prevent division by zero if an array is completely uniform
+                    if feat_max > feat_min:
+                        arr_patch[valid_mask] = (arr_patch[valid_mask] - feat_min) / (feat_max - feat_min)
+                    else:
+                        arr_patch[valid_mask] = 0.0
                 
             arr_patch[~valid_mask] = 0.0
             x_tensor[channel_idx] = torch.from_numpy(arr_patch)
             channel_idx += 1
             
-        # 3. Load Statics
+        # Load Statics
         if self.static_features and f"{tile_id}/static_features" in f_primary:
+            
             static_group = f_primary[f"{tile_id}/static_features"]
+            
             for feature in self.static_features:
+
+                # --- SCANFI LANDCOVER ONE-HOT ENCODING ---
+                if feature == 'landcover':
+                    # Load as Long (int64) which is required for PyTorch one_hot
+                    arr_patch = static_group[feature][:].astype(np.int64)
+                    arr_tensor = torch.from_numpy(arr_patch)
+                    
+                    # Map valid classes (1-8) to (0-7). Map 255 to temporary index 8.
+                    mask_255 = (arr_tensor == 255)
+                    mapped_tensor = torch.where(mask_255, torch.tensor(8), arr_tensor - 1)
+                    
+                    # One-hot encode into 9 channels (0 to 8). Shape becomes (H, W, 9)
+                    one_hot = F.one_hot(mapped_tensor, num_classes=9)
+                    
+                    # Rearrange shape to (Channels, H, W) and drop the 9th channel (the 255s)
+                    one_hot = one_hot[..., :8].permute(2, 0, 1).float()
+                    
+                    # Inject the 8 channels into the main x_tensor
+                    x_tensor[channel_idx : channel_idx + 8] = one_hot
+                    channel_idx += 8
+                    continue
+                # ---------------------------------------
+
+                # --- CCRS LANDCOVER ONE-HOT ENCODING ---
+                # elif feature == 'ccrs_landcover':
+                elif feature in ['ccrs_landcover', 'annual_ccrs_landcover']:
+
+                    arr_patch = static_group[feature][:].astype(np.int64)
+                    arr_tensor = torch.from_numpy(arr_patch)
+                    
+                    # Instantly map the jumping values using our pre-built lookup tensor.
+                    mapped_tensor = self.ccrs_mapping[arr_tensor]
+                    
+                    # One-hot encode into 16 channels, slice off the 16th (NoData)
+                    one_hot = F.one_hot(mapped_tensor, num_classes=16)
+                    one_hot = one_hot[..., :15].permute(2, 0, 1).float()
+                    
+                    x_tensor[channel_idx : channel_idx + 15] = one_hot
+                    channel_idx += 15
+                    continue
+                # ---------------------------------------
+                
+                # --- ANNUAL DISTURBANCE ONE-HOT ENCODING ---
+                elif feature == 'annual_disturbance':
+                    arr_patch = static_group[feature][:].astype(np.int64)
+                    arr_tensor = torch.from_numpy(arr_patch)
+                    
+                    # Map the NoData/Background (255) to index 6
+                    # Shift active classes (1 to 6) down to indices (0 to 5)
+                    mask_255 = (arr_tensor == 255)
+                    mapped_tensor = torch.where(mask_255, torch.tensor(6), arr_tensor - 1)
+                    
+                    # One-hot encode into 7 channels (indices 0 through 6)
+                    one_hot = F.one_hot(mapped_tensor, num_classes=7)
+                    
+                    # Drop the LAST channel (index 6) which holds the 255 background
+                    # This leaves exactly 6 channels representing classes 1 through 6
+                    one_hot = one_hot[..., :6].permute(2, 0, 1).float()
+                    
+                    x_tensor[channel_idx : channel_idx + 6] = one_hot
+                    channel_idx += 6
+                    continue
+                # ---------------------------------------
+
                 arr_patch = static_group[feature][:].astype(np.float32)
+
+                # --- HUMAN INFLUENCE INDEX (HII) ---
+                if feature == 'hii':
+                    # Scale down the saved integer by 100 to get true 0-64 range
+                    arr_patch = arr_patch / 100.0
+                    
+                    # Apply log1p transformation to squash the right-skew
+                    arr_patch = np.log1p(arr_patch)
+                        
+                    x_tensor[channel_idx] = torch.from_numpy(arr_patch)
+                    channel_idx += 1
+                    continue
+                # ---------------------------------------
 
                 if feature == 'aspect' and self.use_cyclical_aspect:
                     aspect_rad = arr_patch * (np.pi / 180.0)
@@ -310,19 +464,31 @@ class H5FireSimpleDataset(Dataset):
                     x_tensor[channel_idx] = torch.from_numpy(aspect_cos)
                     channel_idx += 1
                     continue
+
+                # Percentage / Zero-Inflated Variables (Min-Max Scaling)
+                elif feature.startswith('prc') or feature == 'closure':
+                    valid_mask = ~np.isnan(arr_patch)
+                    if self.normalize and feature in self.stats_dict:
+                        f_min = self.stats_dict[feature]['min']
+                        f_max = self.stats_dict[feature]['max']
+                        
+                        if f_max > f_min:
+                            arr_patch[valid_mask] = (arr_patch[valid_mask] - f_min) / (f_max - f_min)
+                        else:
+                            arr_patch[valid_mask] = 0.0
                 
-                if self.normalize and feature in self.stats_dict and feature != self.fire_feature:
+                # Continuous Variables like Dem, Slope, Height, Biomass (Z-Score)
+                elif self.normalize and feature in self.stats_dict and feature != self.fire_feature:
                     valid_mask = ~np.isnan(arr_patch)
                     mean = self.stats_dict[feature]['mean']
                     std = self.stats_dict[feature]['std']
                     arr_patch[valid_mask] = (arr_patch[valid_mask] - mean) / std
+
                 
                 x_tensor[channel_idx] = torch.from_numpy(arr_patch)
                 channel_idx += 1
 
-        # ---------------------------------------------------------
-        # 4. Process Fire Masks (Dynamic Aggregation of All Overlaps)
-        # ---------------------------------------------------------
+        # Process Fire Masks (Dynamic Aggregation of All Overlaps)
         curr_fire_mask = torch.zeros((self.patch_size, self.patch_size), dtype=torch.bool)
         fireday_grid = torch.zeros((self.patch_size, self.patch_size), dtype=torch.float32)
         
@@ -362,9 +528,7 @@ class H5FireSimpleDataset(Dataset):
         x_tensor[-2] = curr_fire_mask.float()
         x_tensor[-1] = fireday_grid
 
-        # ---------------------------------------------------------
-        # B. Determine NEXT DAY mask (Output Label)
-        # ---------------------------------------------------------
+        # Determine NEXT DAY mask (Output Label)
         raw_next_mask = torch.zeros((self.patch_size, self.patch_size), dtype=torch.bool)
         
         for fire_dict in s['next_fires']:
@@ -387,18 +551,23 @@ class H5FireSimpleDataset(Dataset):
         if self.transform:
             x_tensor = self.transform(x_tensor)
 
-        meta = {
-            "tile_id": s['tile_id'],
-            "dob": s['dob'],
-            "primary_fire_id": s['primary_fire_id'],
-            "fireday": s['fireday']
-        }
+        out = [x_tensor, y_tensor]
 
         if self.return_sat_age:
             delta_t_tensor = torch.tensor(s['delta_t'], dtype=torch.float32)
-            return x_tensor, y_tensor, delta_t_tensor
-        else:
-            return x_tensor, y_tensor
+            out.append(delta_t_tensor)
+        
+        if self.return_coords:
+            # Shape: (2,) -> [Longitude, Latitude]
+            coords_tensor = torch.tensor([s['center_lon'], s['center_lat']], dtype=torch.float32)
+            out.append(coords_tensor)
+        
+        if self.return_date:
+            # Shape: (3,) -> [Year, Month, Day]
+            date_tensor = torch.tensor(s['fire_date'], dtype=torch.int32)
+            out.append(date_tensor)
+        
+        return tuple(out)
 
 def save_dataset_to_disk(dataset, output_base_folder, split_name):
     """Iterates through the dataset and saves each sample as a .pt file.
@@ -418,14 +587,31 @@ def save_dataset_to_disk(dataset, output_base_folder, split_name):
     # Iterate directly through the dataset and save
     for idx in tqdm(range(len(dataset)), desc=f"Generating {split_name}"):
         
-        x_tensor, y_tensor, delta_t = dataset[idx]
+        sample_tuple = dataset[idx]
 
-        x_np = x_tensor.numpy().astype(np.float16)
-        y_np = y_tensor.numpy().astype(np.uint8)
-        delta_t_np = delta_t.numpy().astype(np.uint8)
+        x_np = sample_tuple[0].numpy().astype(np.float16)
+        y_np = sample_tuple[1].numpy().astype(np.uint8)
+
+        save_kwargs = {'x': x_np, 'y': y_np}
+        tuple_idx = 2
+
+        if dataset.return_sat_age:
+            save_kwargs['delta_t'] = sample_tuple[tuple_idx].numpy().astype(np.uint8)
+            tuple_idx += 1
+
+        # Keep coords as 32-bit float to preserve decimal precision
+        if dataset.return_coords:
+            save_kwargs['coords'] = sample_tuple[tuple_idx].numpy().astype(np.float32)
+            tuple_idx += 1
+        
+        # Save date as standard 32-bit integers
+        if dataset.return_date:
+            save_kwargs['fire_date'] = sample_tuple[tuple_idx].numpy().astype(np.int32)
+            tuple_idx += 1
 
         file_path = os.path.join(split_folder, f"sample_{idx}.npz")
-        np.savez(file_path, x=x_np, y=y_np, delta_t=delta_t_np)
+        
+        np.savez(file_path, **save_kwargs)
 
 
 def generate_simple_offline_data(config: Config) -> None:
@@ -438,11 +624,18 @@ def generate_simple_offline_data(config: Config) -> None:
     tc = config.training
 
     is_sat_age = True
+    is_coords = True
+    is_fire_date = True
 
-    dynamic_feats = ['tmax', 'rh', 'ws', 'prec', 'u10', 'v10', 'evi', 'ndvi', 
-                     's2_b02', 's2_b03', 's2_b04', 's2_b08', 's2_b11', 's2_b12', 's2_scl']
-    static_feats = ['dem', 'slope', 'aspect', 'biomass', 'closure', 'prcb', 'prcc']
-    target_years = ["2020", "2021", "2022", "2023", "2024"] 
+    dynamic_feats = DYNAMIC_FEATURES
+    static_feats = STATIC_FEATURES
+    target_years = TARGET_YEARS
+
+    print('-------- INFO (SAMPLES with LANDCOVER) --------')
+    print(dynamic_feats)
+    print(static_feats)
+    print(target_years)
+    print('-----------------------')
     
     # ---------------------------------------------------------
     # LOAD MAPPERS & DATAFRAMES
@@ -472,7 +665,10 @@ def generate_simple_offline_data(config: Config) -> None:
         dynamic_features=dynamic_feats, static_features=static_feats,
         fire_feature="cumuarea", patch_size=settings.GRID_SIZE,
         use_cumuarea=tc.use_cumuarea, use_cumuarea_prev=tc.use_cumuarea_prev,
-        normalize=False, stats_dict=None, sat_nodata=np.nan
+        normalize=False, stats_dict=None, sat_nodata=np.nan,
+        remove_missing_data=REMOVE_MISSING_DATA,
+        return_coords=is_coords,
+        return_date=is_fire_date
     )
     
     retained_ids = set()
@@ -488,7 +684,7 @@ def generate_simple_offline_data(config: Config) -> None:
     fire_growth_filtered = fire_growth_combined[fire_growth_combined['ID'].astype(str).isin(retained_ids)]
 
     train_ids, val_ids, test_ids = create_stratified_splits(
-        fire_growth_filtered, train_split=tc.train_split, random_state=42, overlap_mapper=master_mapper
+        fire_growth_filtered, train_split=tc.train_split, random_state=RANDOM_SEED, overlap_mapper=master_mapper
     )
 
     del dfs, fire_growth_combined, fire_growth_filtered
@@ -501,9 +697,13 @@ def generate_simple_offline_data(config: Config) -> None:
         settings.H5_OUTPUT_FOLDER, 
         master_mapper,
         train_ids,
-        stats_filename="simple_dataset_stats.json"
+        stats_filename="simple_dataset_stats_3_years_v1.json",
+        remove_missing_data=REMOVE_MISSING_DATA
     )
-
+    # stats_filepath = "simple_dataset_stats_3_years_v1.json"
+    # print(f"Loading statistics directly from {stats_filepath}...")
+    # with open(stats_filepath, "r") as f:
+    #     stats_dict = json.load(f)
 
     common_kwargs = {
         'h5_dir': settings.H5_OUTPUT_FOLDER, 'mapper': master_mapper,
@@ -511,19 +711,52 @@ def generate_simple_offline_data(config: Config) -> None:
         'fire_feature': "cumuarea", 'patch_size': settings.GRID_SIZE,
         'use_cumuarea': tc.use_cumuarea, 'use_cumuarea_prev': tc.use_cumuarea_prev,
         'normalize': True, 'stats_dict': stats_dict, 'sat_nodata': np.nan,
-        'use_cyclical_aspect': tc.use_cyclical_aspect, 'return_sat_age': is_sat_age
+        'use_cyclical_aspect': tc.use_cyclical_aspect, 'return_sat_age': is_sat_age,
+        'remove_missing_data': REMOVE_MISSING_DATA,
+        'return_coords': is_coords,
+        'return_date': is_fire_date
     }
 
     # ---------------------------------------------------------
     # INSTANTIATE DATASETS AND SAVE TO DISK
     # ---------------------------------------------------------
     train_dataset = H5FireSimpleDataset(id_list=train_ids, **common_kwargs)
-    val_dataset = H5FireSimpleDataset(id_list=val_ids, **common_kwargs)
-    test_dataset = H5FireSimpleDataset(id_list=test_ids, **common_kwargs)
+    print(f'Number of training samples {len(train_dataset)}')
 
-    # Save everything directly to the SAMPLE_FOLDER
-    save_dataset_to_disk(train_dataset, settings.SAMPLE_FOLDER, "train")
-    save_dataset_to_disk(val_dataset, settings.SAMPLE_FOLDER, "val")
-    save_dataset_to_disk(test_dataset, settings.SAMPLE_FOLDER, "test")
+    val_dataset = H5FireSimpleDataset(id_list=val_ids, **common_kwargs)
+    print(f'Number of validation samples {len(val_dataset)}')
+
+    test_dataset = H5FireSimpleDataset(id_list=test_ids, **common_kwargs)
+    print(f'Number of test samples {len(test_dataset)}')
+
+    # ---------------------------------------------------------
+    # VERIFICATION
+    # ---------------------------------------------------------
+    sample_out = test_dataset[0]
+    print(f'\nVerification:')
+    print(f'Shape of X : {sample_out[0].shape}')
+    print(f'Shape of Y : {sample_out[1].shape}')
+    
+    out_idx = 2
+    if test_dataset.return_sat_age:
+        print(f'Satellite age : {sample_out[out_idx].item()} days')
+        out_idx += 1
+    
+    if test_dataset.return_coords:
+        coords = sample_out[out_idx].numpy()
+        print(f'Coordinates   : [Lon: {coords[0]:.4f}, Lat: {coords[1]:.4f}]')
+        out_idx += 1
+    
+    if test_dataset.return_date:
+        f_date = sample_out[out_idx].numpy()
+        print(f'Fire Date     : {f_date[0]}-{f_date[1]:02d}-{f_date[2]:02d}')
+
+    # Save
+    samples_folder = settings.SAMPLE_FOLDER
+    print(samples_folder)
+    
+    save_dataset_to_disk(train_dataset, samples_folder, "train")
+    save_dataset_to_disk(val_dataset, samples_folder, "val")
+    save_dataset_to_disk(test_dataset, samples_folder, "test")
     
     print("\nAll data successfully generated and saved to disk!")

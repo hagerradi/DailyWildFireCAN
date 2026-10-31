@@ -1,12 +1,12 @@
 import sys
 import argparse
 from pathlib import Path
-import pystac_client
 import pandas as pd
 import gc
 
 from configs import settings
 import data_preparation.satellite_generation.satellite_sentinel as satellite_sentinel
+from data_preparation.data_configs.data_settings import SENTINEL_BANDS
 
 
 def process_fire_pipeline(fire_id, task_id="Local"):
@@ -41,7 +41,7 @@ def process_fire_pipeline(fire_id, task_id="Local"):
         print(f"--- [Task {task_id}] Clearing previous failure marker for Fire {fire_id} ---")
         fail_marker.unlink()
 
-    selected_bands = ["B02", "B03", "B04", "B08", "B11", "B12"]
+    selected_bands = SENTINEL_BANDS
 
     # Run the Pipeline
     try:

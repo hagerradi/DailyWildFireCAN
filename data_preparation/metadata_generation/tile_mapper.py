@@ -11,12 +11,11 @@ from data_preparation.features_generation.helpers import lonlat_to_canada_lamber
 
 def generate_mapper_for_year(year, output_folder):
     """
+    Saves the json mapper for the specified year
 
     Args:
       year: the target year 
       output_folder: the output folder to store the mappers
-
-    Returns:
 
     """
     
@@ -72,7 +71,7 @@ def generate_mapper_for_year(year, output_folder):
             
         mapper[global_key] = fires_list
 
-    # --- Print Stats ---
+    # Print Stats
     total_unique_combinations = len(mapper)
     overlapping_combinations = sum(1 for fires in mapper.values() if len(fires) > 1)
     max_overlap = max((len(fires) for fires in mapper.values()), default=0)
@@ -85,7 +84,7 @@ def generate_mapper_for_year(year, output_folder):
     print(f"Maximum concurrent fires in single tile : {max_overlap}")
     print("="*50 + "\n")
 
-    # --- Save to JSON ---
+    # Save to JSON
     output_json_path = os.path.join(output_folder, f"tile_dob_mapper_{year}.json")
     Path(output_json_path).parent.mkdir(parents=True, exist_ok=True)
     
@@ -102,6 +101,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     out_dir = settings.METADATA_FOLDER
+
+    print(f'Metadata folder : {out_dir}')
+    print(f'Metadata year : {args.year}')
     
     generate_mapper_for_year(
         year=args.year,

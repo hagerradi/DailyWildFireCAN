@@ -9,14 +9,15 @@ import rioxarray
 import xarray as xr
 from tqdm import tqdm
 import h5py
+from data_preparation.data_configs.data_settings import DEG_CRS, VIIRS_CRS_TRANSFORM, VIIRS_MAX_RETRIES, VIIRS_WAIT_TIME_SECONDS, VIIRS_GEE_IMAGE, VIIRS_GEE_PROJECT
 
 try:
-    ee.Initialize(project='widlfires-vegetation')
+    ee.Initialize(project=VIIRS_GEE_PROJECT)
 except Exception as e:
     ee.Authenticate()
-    ee.Initialize(project='widlfires-vegetation')
+    ee.Initialize(project=VIIRS_GEE_PROJECT)
 
-def get_gee_url_with_retry(ee_image, roi, max_retries=5):
+def get_gee_url_with_retry(ee_image, roi, max_retries=VIIRS_MAX_RETRIES):
     """Requests a download URL from GEE with exponential backoff.
     Injects the exact EPSG:4326 grid transform for perfect pixel alignment.
 
@@ -26,14 +27,13 @@ def get_gee_url_with_retry(ee_image, roi, max_retries=5):
       max_retries:  the maximum retries for fetching data from GEE (Default value = 5)
 
     """
-    wait_time = 2
+    wait_time = VIIRS_WAIT_TIME_SECONDS
     
     for attempt in range(max_retries):
         try:
             url = ee_image.getDownloadURL({
-                'crs': 'EPSG:4326', 
-                'crs_transform': [0.004166666666666667, 0, -141.0, 
-                                  0, -0.004166666666666667, 83.0],
+                'crs': f'EPSG:{DEG_CRS}', 
+                'crs_transform': VIIRS_CRS_TRANSFORM,
                 'region': roi,
                 'format': 'GEO_TIFF'
             })
@@ -148,8 +148,7 @@ def run_daily_viirs_pipeline(h5_path):
                 if memfile: 
                     src.close(); memfile.close()
                 
-                # print(f"Fetching GEE Composite for DOY {current_doy}...")
-                img = (ee.ImageCollection("NASA/VIIRS/002/VNP13A1")
+                img = (ee.ImageCollection(VIIRS_GEE_IMAGE)
                         .filter(ee.Filter.eq('system:time_start', target_time_ms))
                         .select(['NDVI', 'EVI']).first().clip(roi))
                 

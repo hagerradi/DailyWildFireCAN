@@ -3,11 +3,11 @@ seed: 42
 dataset:
   height: 256
   width: 256
-  channels: 25
+  channels: 50
   num_classes: 1
 
 model:
-  input_channels: 25
+  input_channels: 50
   num_classes: 1
   hidden_features: [64, 128, 256, 512]
   use_skip_connections: true
@@ -38,5 +38,5 @@ comet:
   enabled: true
   project_name: ""
   workspace: ""
-  experiment_name: "utae"
-  experiment_tags: ["utae-baseline", "25-channels", "1-class"]
+  experiment_name: "unet"
+  experiment_tags: ["unet-baseline", "50-channels", "1-class"]

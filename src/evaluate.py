@@ -11,13 +11,13 @@ from src.dataloader_timeseries import get_timeseries_dataloaders
 
 # Models
 from src.models import unet
-from src.models import unet_age
+from src.models import unet_time_gap
 from src.models import unet_convlstm
 from src.models import unet_attention
 from src.models import unet_segformer
 from src.models import utae
 
-from src.evaluator import Trainer
+from src.evaluator import Evaluator
 from src.utils import seed_everything
 from src.focal_loss import FocalLoss 
 from src.dice_loss import DiceLoss
@@ -53,7 +53,7 @@ def setup_evaluation(config: Config, architecture: str):
     
     # Setup Dataloaders & Model based on architecture
     if mc.architecture == 'unet':
-        train_loader, _, test_loader = get_dataloaders(config, is_sat_age=False)
+        _, _, test_loader = get_dataloaders(config, is_sat_age=False)
 
         model = unet.UNet(
             input_channels=mc.input_channels,
@@ -65,7 +65,7 @@ def setup_evaluation(config: Config, architecture: str):
         
     elif mc.architecture == 'unet_attention':
 
-        train_loader, _, test_loader = get_dataloaders(config, is_sat_age=False)
+        _, _, test_loader = get_dataloaders(config, is_sat_age=False)
 
         model = unet_attention.AttentionUNet(
             input_channels=mc.input_channels,
@@ -76,11 +76,11 @@ def setup_evaluation(config: Config, architecture: str):
             use_attention=True
         )
         
-    elif mc.architecture == 'unet_age':
+    elif mc.architecture == 'unet_time_gap':
 
-        train_loader, _, test_loader = get_dataloaders(config, is_sat_age=True)
+        _, _, test_loader = get_dataloaders(config, is_sat_age=True)
 
-        model = unet_age.UNet(
+        model = unet_time_gap.UNet(
             input_channels=mc.input_channels,
             num_classes=mc.num_classes,
             hidden_features=mc.hidden_features,
@@ -90,7 +90,7 @@ def setup_evaluation(config: Config, architecture: str):
         
     elif mc.architecture == 'unet_convlstm':
 
-        train_loader, _, test_loader = get_timeseries_dataloaders(config, return_positions=False)
+        _, _, test_loader = get_timeseries_dataloaders(config, return_positions=False)
 
         model = unet_convlstm.SpatiotemporalUNet(
             input_channels=mc.input_channels,
@@ -100,7 +100,7 @@ def setup_evaluation(config: Config, architecture: str):
         )
         
     elif mc.architecture == 'unet_segformer':
-        train_loader, _, test_loader = get_dataloaders(config, is_sat_age=False)
+        _, _, test_loader = get_dataloaders(config, is_sat_age=False)
 
         model = unet_segformer.UNetSegFormer(
             in_channels=mc.input_channels,
@@ -108,7 +108,7 @@ def setup_evaluation(config: Config, architecture: str):
         )
     
     elif mc.architecture == 'utae':
-        train_loader, _, test_loader = get_timeseries_dataloaders(
+        _, _, test_loader = get_timeseries_dataloaders(
             config,
             return_positions=True,
         )
@@ -129,54 +129,34 @@ def setup_evaluation(config: Config, architecture: str):
     else:
         raise ValueError(f"Unknown architecture: '{mc.architecture}'")
 
-    # Setup Loss & Dummy Optimizer (Required for Trainer init, though unused in eval)
-    device = Trainer._resolve_device(config.training.device)
-    
-    # Optimizer & loss
-    optimizer = torch.optim.AdamW(
-        model.parameters(),
-        lr=config.training.learning_rate,
-        weight_decay=config.training.weight_decay,
-    )
-
-    warmup_epochs = min(1, config.training.num_epochs - 1)
-    steps_per_epoch = len(train_loader)
-    total_steps = config.training.num_epochs * steps_per_epoch
-    warmup_steps = max(1, warmup_epochs * steps_per_epoch)
-
-    warmup_scheduler = torch.optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=warmup_steps)
-    cosine_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=(total_steps - warmup_steps))
-    scheduler = torch.optim.lr_scheduler.SequentialLR(
-        optimizer, schedulers=[warmup_scheduler, cosine_scheduler], milestones=[warmup_steps]
-    )
+    # Setup Loss
+    device = Evaluator._resolve_device(config.training.device)
     
     if config.training.use_cumuarea:
-        # --- 3-CLASS SETUP ---
+        # 3-CLASS SETUP
         print("Initializing 3-Class CrossEntropy Loss...")
         weights = torch.tensor([1.0, 10.0, 50.0], dtype=torch.float32).to(device)
         loss_fn = torch.nn.CrossEntropyLoss(weight=weights)
     else:
-        # --- 2-CLASS SETUP (Using Custom Focal + Dice) ---
+        # 2-CLASS SETUP (Using Custom Focal + Dice)
         # 0 = Background + Old Fire, 1 = New Fire
         print("Initializing 2-Class Combo Loss (Focal + Dice)...")
-        # Higher gamma = harder focus on difficult pixels.
+        # Higher gamma = harder focus on difficult pixels
         loss_fn = CombinedLoss(alpha=0.85, gamma=2.0, focal_weight=0.5, dice_weight=0.5).to(device)
 
-    # Trainer
-    trainer = Trainer(
+    # Evaluator
+    evaluator = Evaluator(
         model=model,
-        optimizer=optimizer, 
-        scheduler=scheduler,
         loss_fn=loss_fn, 
         config=config.training, 
         logger=None
     )
     
-    return trainer, test_loader
+    return evaluator, test_loader
 
 def main():
 
-    parser = argparse.ArgumentParser(description="Wildfire segmentation — entry point.")
+    parser = argparse.ArgumentParser(description="Wildfire segmentation evaluation — entry point.")
     parser.add_argument("--config", type=str, default="configs/default.yaml", help="Path to YAML config file.")
     args = parser.parse_args()
 
@@ -187,7 +167,7 @@ def main():
     architectures = [
         'unet', 
         'unet_attention', 
-        'unet_age', 
+        'unet_time_gap', 
         'unet_convlstm',  
         'unet_segformer',
         'utae'
@@ -201,23 +181,23 @@ def main():
     for arch in architectures:
         print(f"\n{'='*40}\nEvaluating Architecture: {arch}\n{'='*40}")
 
-        # --- CONFIG SWITCHING LOGIC ---
+        # CONFIG SWITCHING LOGIC
         if arch == 'unet_env':
             current_config_path = ENV_CONFIG_PATH
         elif arch == 'unet_sat':
             current_config_path = SAT_CONFIG_PATH
         else:
-            current_config_path = args.config # Reverts to the default config from your argparse
+            current_config_path = args.config # Reverts to the default config from the argparse
             
         print(f"Loading config from: {current_config_path}")
         config = Config.from_yaml(current_config_path)
         
         # Setup the environment once per architecture
-        trainer, test_loader = setup_evaluation(config, arch)
+        evaluator, test_loader = setup_evaluation(config, arch)
         
         # Iterate over the 3 runs
         for run in runs:
-            # Construct folder name: e.g., checkpoints_unet_v2_run1
+            # Construct folder name: e.g., checkpoints_unet_run1
             folder_name = f"checkpoints_{arch}_run{run}"
 
             ckpt_path = os.path.join(checkpoint_base_dir, folder_name, "best_checkpoint.pt")
@@ -228,12 +208,12 @@ def main():
 
             print(f'\n--- RUN {run} ---') 
             print(f"\n--- Loading {folder_name} ---")
-            epoch = trainer.load_checkpoint(ckpt_path)
+            epoch = evaluator.load_checkpoint(ckpt_path)
             
             # Run Evaluation
-            test_loss, test_iou_metrics = trainer.validate(test_loader, epoch=None)
+            test_loss, test_metrics = evaluator.evaluate(test_loader)
 
-            for metric_name, value in test_iou_metrics.items():
+            for metric_name, value in test_metrics.items():
                 print(f"{metric_name}: {value:.4f}")
             
             # Store metrics
@@ -244,7 +224,7 @@ def main():
                 "test_loss": test_loss,
             }
             # Unpack all metrics (e.g., IoU, F1) into the dict
-            result_dict.update(test_iou_metrics) 
+            result_dict.update(test_metrics) 
             all_results.append(result_dict)
 
     # Save results to a clean CSV
@@ -253,7 +233,7 @@ def main():
         output_csv = "evaluation_results.csv"
         df.to_csv(output_csv, index=False)
         print(f"\nAll evaluations complete! Results saved to {output_csv}")
-        print(df.to_string()) # Print the nice table to terminal
+        print(df.to_string())
     else:
         print("\nNo evaluations were successfully completed.")
 

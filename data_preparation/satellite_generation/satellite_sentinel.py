@@ -1,3 +1,4 @@
+import h5py
 import odc.stac
 import planetary_computer
 import pystac_client
@@ -7,11 +8,12 @@ from datetime import datetime, timedelta
 from tqdm import tqdm
 import dask
 from dask.diagnostics import ProgressBar
-import h5py
 import json
 import planetary_computer
 from odc.geo.geobox import GeoBox
 from affine import Affine
+
+from data_preparation.data_configs.data_settings import SENTINEL_API_URL, SENTINEL_MAX_LOOKBACK_DAYS, SENTINEL_MAX_RETRIES, SENTINEL_MAX_DOWNLOAD_RETRIES, SENTINEL_CLOUD_COVERAGE_THRESHOLDS, SENTINEL_COLLECTION, SENTINEL_WORKERS
 
 def get_tile_master_cube(h5_path, tile_id, bands):
     """
@@ -24,7 +26,7 @@ def get_tile_master_cube(h5_path, tile_id, bands):
     # ---------------------------------------------------------
     print(f"[{tile_id}] Connecting to Planetary Computer for fresh tokens...")
     catalog = pystac_client.Client.open(
-        "https://planetarycomputer.microsoft.com/api/stac/v1",
+        SENTINEL_API_URL,
         modifier=planetary_computer.sign_inplace,
     )
 
@@ -58,11 +60,11 @@ def get_tile_master_cube(h5_path, tile_id, bands):
     # STAC API Retry Loop
     # ---------------------------------------------------------
     items = []
-    max_api_retries = 5
+    max_api_retries = SENTINEL_MAX_RETRIES
     for attempt in range(max_api_retries):
         try:
             search = catalog.search(
-                collections=["sentinel-2-l2a"],
+                collections=[SENTINEL_COLLECTION],
                 bbox=[lons.min() - 0.1, lats.min() - 0.1, lons.max() + 0.1, lats.max() + 0.1],
                 datetime=f"{start_date.date()}/{end_date.date()}"
             )
@@ -98,11 +100,11 @@ def get_tile_master_cube(h5_path, tile_id, bands):
     # ---------------------------------------------------------
     # Dask Threading (Download Compute with Retries)
     # ---------------------------------------------------------
-    max_retries = 3
+    max_retries = SENTINEL_MAX_DOWNLOAD_RETRIES
     cube = None
     download_success = False
     
-    with dask.config.set(scheduler='threads', num_workers=8):
+    with dask.config.set(scheduler='threads', num_workers=SENTINEL_WORKERS):
         for attempt in range(max_retries):
             try:
                 print(f"[{tile_id}] Download Attempt {attempt + 1}...")
@@ -193,8 +195,8 @@ def process_tile_h5_from_cube(h5_path, tile_id, cube, metadata, bands):
     
     cube_dates = metadata["dates"]
     cube_ccs = metadata["cloud_covers"]
-    max_lookback_days = 30
-    threshold_tiers = [40.0, 50.0, 60.0, 70.0, 80.0, 90.0, 100.0]
+    max_lookback_days = SENTINEL_MAX_LOOKBACK_DAYS
+    threshold_tiers = SENTINEL_CLOUD_COVERAGE_THRESHOLDS
 
     with h5py.File(h5_path, 'a') as f:
         fire_year = int(f.attrs['year'])
@@ -227,7 +229,12 @@ def process_tile_h5_from_cube(h5_path, tile_id, cube, metadata, bands):
                     idx_first_valid = np.argmax(mask, axis=0) 
                     
                     rows, cols = np.indices(daily_stack.shape[2:])
-                    final_mosaic = np.zeros(daily_stack.shape[1:], dtype=daily_stack.dtype)
+                    # final_mosaic = np.zeros(daily_stack.shape[1:], dtype=daily_stack.dtype)
+                    final_mosaic = np.full(
+                        daily_stack.shape[1:],
+                        np.nan,
+                        dtype=daily_stack.dtype
+                    )
                     for b in range(daily_stack.shape[1]):
                         final_mosaic[b] = daily_stack[idx_first_valid[b], b, rows, cols]
 
@@ -289,8 +296,8 @@ def run_s2_h5_pipeline(h5_path, bands):
     """
     
     pipeline_bands = list(bands)
-    if "SCL" not in pipeline_bands:
-        pipeline_bands.append("SCL")
+    # if "SCL" not in pipeline_bands:
+    #     pipeline_bands.append("SCL")
 
     print(f"\n{'='*60}\nRunning Tile-Based Sentinel-2 for: {h5_path.name}")
 

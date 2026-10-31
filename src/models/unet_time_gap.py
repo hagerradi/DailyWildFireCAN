@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
-from src.models.age import SatelliteAgeBottleneck, AgeInjectionMLP
-
+from src.models.time_gap import SatelliteTimeGapBottleneck, TimeGapInjectionMLP
 
 class UNet(nn.Module):
     def __init__(self, input_channels: int = 1, num_classes: int = 1, hidden_features: list = None, use_skip_connections: bool = True, use_activation_after_upsampling: bool = False):
@@ -38,8 +37,8 @@ class UNet(nn.Module):
         # ---------------------------------------------------------
         # Initialize the Age Injection Modules
         # ---------------------------------------------------------
-        self.age_embedder = SatelliteAgeBottleneck(fourier_dim=16)
-        self.age_mlp = AgeInjectionMLP(fourier_dim=16, bottleneck_channels=bottleneck_out_channels)
+        self.age_embedder = SatelliteTimeGapBottleneck(fourier_dim=16)
+        self.age_mlp = TimeGapInjectionMLP(fourier_dim=16, bottleneck_channels=bottleneck_out_channels)
         
         # decoder block: upsampling
         for h_feature in reversed(hidden_features):

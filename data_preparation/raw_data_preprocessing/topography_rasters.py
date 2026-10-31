@@ -4,6 +4,7 @@ import numpy as np
 import os
 
 from configs import settings
+from data_preparation.data_configs.data_settings import METER_NAD_CRS
 
 def generate_tile_terrain(
     tile_id, 
@@ -60,7 +61,7 @@ def generate_tile_terrain(
         print(f"[{tile_id}] 1/3: Cropping DEM to exact grid limits...")
         subprocess.run([
             "gdalwarp", 
-            "-t_srs", "EPSG:3347",
+            "-t_srs", f"EPSG:{METER_NAD_CRS}",
             "-te", str(min_x_m), str(min_y_m), str(max_x_m), str(max_y_m), # Exact Bounds
             "-tr", str(base_res), str(base_res),
             "-tap", # Forces alignment to the resolution

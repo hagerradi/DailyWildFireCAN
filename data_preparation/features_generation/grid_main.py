@@ -11,6 +11,9 @@ import data_preparation.features_generation.weather as weather
 import data_preparation.features_generation.fuel_scanfi as fuel_scanfi
 import data_preparation.features_generation.fuel_viirs as fuel_viirs
 import data_preparation.features_generation.topography as topography
+import data_preparation.features_generation.fuel_landcover as fuel_landcover
+import data_preparation.features_generation.nbac_disturbance_cumulative as nbac_disturbance_cumulative
+import data_preparation.features_generation.human_index as human_index
 
 TOPO_VARS = {
     'dem': settings.ELEVATION_FOLDER,
@@ -18,13 +21,21 @@ TOPO_VARS = {
     'aspect': settings.ASPECT_FOLDER
 }
 
-def process_fire_pipeline(fire_id, fire_growth_pts, scanfi_year):
+def process_fire_pipeline(fire_id, 
+                          fire_growth_pts, 
+                          scanfi_year, 
+                          landcover_year, 
+                          disturbance_year,
+                          hii_year):
     """Executes the complete data extraction pipeline for a single fire.
 
     Args:
       fire_id: the fire ID
       fire_growth_pts: the CFSD dataframe 
       scanfi_year: the year of the SCANFI data
+      landcover_year: the year of the LANDCOVER data
+      disturbance_year: the year of the DISTURBANCE data
+      hii_year: the year of the HII data
     """
     print(f"\n--- Starting Fire: {fire_id} ---")
     
@@ -53,33 +64,58 @@ def process_fire_pipeline(fire_id, fire_growth_pts, scanfi_year):
     topography.run_static_topography_pipeline(h5_path, TOPO_VARS)
     fuel_scanfi.run_single_fire_scanfi(h5_path, settings.SCANFI_FOLDER, scanfi_year)
     fuel_viirs.run_daily_viirs_pipeline(h5_path)
+    fuel_landcover.run_single_fire_landcover(h5_path, settings.LANDCOVER_FOLDER, landcover_year)
+    nbac_disturbance_cumulative.run_single_fire_annual_nbac_disturbance(h5_path, 
+                                                          annual_disturbance_folder=settings.DISTURBANCE_FOLDER,
+                                                          disturbance_year=disturbance_year)
+    human_index.run_single_fire_hii(h5_path, 
+                                        hii_folder=settings.HII_ORG_FOLDER,
+                                        hii_year=hii_year)
 
     print(f"--- Finished Fire: {fire_id} ---")
 
 
-def run_local(all_fire_ids, fire_growth_pts, scanfi_year):
+def run_local(all_fire_ids, fire_growth_pts, scanfi_year, landcover_year, disturbance_year, hii_year):
     """Processes all fires sequentially for local/laptop execution.
 
     Args:
       all_fire_ids: list of fires IDs
       fire_growth_pts: the CFSD dataframe
       scanfi_year: the year of the SCANFI data
+      landcover_year: the year of the CCRS LANDCOVER data
+      disturbance_year: the year of the DISTURBANCE data
+      hii_year: the year of the HUMAN INDEX data
     """
     total_fires = len(all_fire_ids)
     print(f"\n=== LOCAL MODE: Processing ALL {total_fires} fires sequentially ===")
     
     for i, fire_id in enumerate(all_fire_ids, start=1):
         print(f"\n[{i}/{total_fires}] Processing Fire ID: {fire_id}")
-        process_fire_pipeline(fire_id, fire_growth_pts, scanfi_year)
+        process_fire_pipeline(fire_id, 
+                              fire_growth_pts, 
+                              scanfi_year=scanfi_year,
+                              landcover_year=landcover_year,
+                              disturbance_year=disturbance_year,
+                              hii_year=hii_year)
 
 
-def run_distributed(all_fire_ids, fire_growth_pts, scanfi_year, task_id, chunk_size):
+def run_distributed(all_fire_ids, 
+                    fire_growth_pts, 
+                    scanfi_year, 
+                    landcover_year,
+                    disturbance_year,
+                    hii_year,
+                    task_id, 
+                    chunk_size):
     """Processes a chunk of fires based on the SLURM Array Task ID.
 
     Args:
       all_fire_ids: the list fire IDs
       fire_growth_pts: the CFSD dataframe 
       scanfi_year: the year of the SCANFI data
+      landcover_year: the year of the LANDCOVER data
+      disturbance_year: the year of the DISTURBANCE data
+      hii_year: the year of the HUMAN INDEX data
       task_id: the ID of the task for the distributed job
       chunk_size: the number of fires to process in the same task
     """
@@ -100,7 +136,12 @@ def run_distributed(all_fire_ids, fire_growth_pts, scanfi_year, task_id, chunk_s
     print(f"Assigned Fires: {my_fires}")
     
     for fire_id in my_fires:
-        process_fire_pipeline(fire_id, fire_growth_pts, scanfi_year)
+        process_fire_pipeline(fire_id, 
+                              fire_growth_pts, 
+                              scanfi_year=scanfi_year, 
+                              landcover_year=landcover_year,
+                              disturbance_year=disturbance_year,
+                              hii_year=hii_year)
 
 
 if __name__ == "__main__":
@@ -124,8 +165,13 @@ if __name__ == "__main__":
     target_year_int = int(target_year)
     if target_year_int > 2020:
         scanfi_year = "2020"
+        landcover_year = "2020"
+        hii_year = "2020"
     else:
         scanfi_year = "2015"
+        landcover_year = "2015"
+        hii_year = str(target_year_int - 1)
+    disturbance_year = str(target_year_int - 1)
         
     print(f"Using SCANFI data from year: {scanfi_year}")
     
@@ -141,9 +187,22 @@ if __name__ == "__main__":
 
     # Route to the correct execution path
     if args.mode == "local":
-        run_local(all_fire_ids, fire_growth_pts, scanfi_year)
+        run_local(all_fire_ids, 
+                  fire_growth_pts, 
+                  scanfi_year=scanfi_year,
+                  landcover_year=landcover_year,
+                  disturbance_year=disturbance_year,
+                  hii_year=hii_year)
+    
     elif args.mode == "distributed":
         if args.task_id == -1:
             print("[!] Error: You must provide a --task-id when using distributed mode.")
             sys.exit(1)
-        run_distributed(all_fire_ids, fire_growth_pts, scanfi_year, args.task_id, args.chunk_size)
+        run_distributed(all_fire_ids, 
+                        fire_growth_pts, 
+                        scanfi_year=scanfi_year, 
+                        landcover_year=landcover_year,
+                        disturbance_year=disturbance_year,
+                        hii_year=hii_year,
+                        task_id=args.task_id, 
+                        chunk_size=args.chunk_size)

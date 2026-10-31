@@ -50,7 +50,9 @@ Place them inside the `SAMPLES` folder defined in your `settings.py`, following 
 SAMPLES/
    ├── train/
    ├── val/
-   └── test/
+   ├── test_easy/
+   ├── test_medium/
+   └── test_hard/
 ```
 
 ### Option 2: Generate Samples from Scratch
@@ -67,7 +69,10 @@ Make sure to organize the downloaded files according to the directories defined 
     ├── Firegrowth_pts_v1_1_2023/Firegrowth_pts_v1_1_2023.csv
     ├── Firegrowth_pts_v1_1_2022/Firegrowth_pts_v1_1_2022.csv
     ├── Firegrowth_pts_v1_1_2021/Firegrowth_pts_v1_1_2021.csv
-    └── Firegrowth_pts_v1_1_2020/Firegrowth_pts_v1_1_2020.csv
+    ├── Firegrowth_pts_v1_1_2020/Firegrowth_pts_v1_1_2020.csv
+    ├── Firegrowth_pts_v1_1_2019/Firegrowth_pts_v1_1_2019.csv
+    ├── Firegrowth_pts_v1_1_2018/Firegrowth_pts_v1_1_2018.csv
+    └── Firegrowth_pts_v1_1_2017/Firegrowth_pts_v1_1_2017.csv
 ```
 
 **2. JSON Mappers:** Place these in your `METADATA_FOLDER`.
@@ -77,10 +82,17 @@ Make sure to organize the downloaded files according to the directories defined 
     ├── tile_dob_mapper_2023.json
     ├── tile_dob_mapper_2022.json
     ├── tile_dob_mapper_2021.json
-    └── tile_dob_mapper_2020.json
+    ├── tile_dob_mapper_2020.json
+    ├── tile_dob_mapper_2019.json
+    ├── tile_dob_mapper_2018.json
+    └── tile_dob_mapper_2017.json
 ```
 
 **3. H5 Files:** Place these in your `H5_OUTPUT_FOLDER`.
+
+> **⚙️ Customizing Sample Generation:**
+> The default variables for feature selection (dynamic/static variables), target years, and the time-series sequence length (default is 3) are pre-configured. If you need to modify any of these before generating your data, edit the settings file located at:
+> `samples_generation/samples_configs/samples_settings.py`
 
 This step handles the **Train/Validation/Test splitting** using the CSV fire growth data. It uses the tile mappers to guarantee that geographically overlapping fires are kept strictly within the same fold, ensuring zero spatial data leakage between your training and testing sets.
 
@@ -101,7 +113,7 @@ python -m samples_generation.data_generator_main --config configs/default.yaml -
 
 **Key Execution Notes:**
 * **Dataset Normalization:** During generation, the script automatically calculates the global mean and standard deviation for all features across the training split and saves a `.json` file. This ensures the validation and test sets are normalized exclusively using training statistics.
-* **Output Location:** The script saves each generated sample as an individual PyTorch (`.pt`) file inside designated split subfolders (e.g., `train`, `val`, `test`) within either your `SAMPLE_FOLDER` or `TIMESERIES_SAMPLE_FOLDER`. Each file contains a dictionary with the following:
+* **Output Location:** The script saves each generated sample as a numpy (`.npz`) file inside designated split subfolders (e.g., `train`, `val`, `test_easy`, `test_medium`, `test_hard`) within either your `SAMPLE_FOLDER` or `TIMESERIES_SAMPLE_FOLDER`. Each file contains a dictionary with the following:
   * `x`: The input features.
   * `y`: The ground truth target mask.
   * `delta_t`: The satellite image age in days (included for `simple` samples only).
@@ -120,18 +132,48 @@ Multiple model architectures are implemented in the `src/models/` directory to h
 
 To switch between architectures (which will automatically configure the corresponding dataloaders, such as swapping from single-day static prediction to a 3-day sliding window), open your `configs/default.yaml` and update the `architecture` parameter under the `model` section to one of the following options:
 
-1. **Standard UNet** (`architecture: 'unet'`): 
+#### Mono-Temporal Models:
+1. **Standard UNet** (`architecture: 'unet'`):
    The baseline spatial U-Net model.
-2. **Age-Encoding UNet** (`architecture: 'unet_age'`): 
+2. **U-Net with time-gap encoding** (`architecture: 'unet_time_gap'`): 
    A U-Net that explicitly encodes the satellite age (the time gap in days between the fire event and the satellite acquisition).
-3. **Spatiotemporal UNet** (`architecture: 'unet_convlstm'`): 
-   A U-Net featuring a **ConvLSTM** bottleneck for recurrent time-series processing (e.g., 3-day sliding window forecasting).
-4. **Attention UNet** (`architecture: 'unet_attention'`): 
+3. **Attention UNet** (`architecture: 'unet_attention'`): 
    A U-Net utilizing attention gates in the skip connections to help the model focus on the most critical spatial features and suppress irrelevant background noise.
-5. **UNet-SegFormer** (`architecture: 'unet_segformer'`): 
+4. **UNet-SegFormer** (`architecture: 'unet_segformer'`): 
    A hybrid vision-transformer architecture that replaces the standard CNN encoder with SegFormer's Mix Vision Transformer (MiT), paired with a standard U-Net decoder for heavy pixel-level accuracy. 
-6. **UT-AE** (`architecture: 'utae'`):
+5. **Swin-U-Net** (`architecture: 'asufm'`): 
+   A U-shaped encoder-decoder architecture with skip connection, where convolutional blocks are replaced with Swin Transformers blocks (Li & Rad, 2024).
+6. **U-Mamba** (`architecture: 'umamba'`): 
+   An encoder-decoder architecture that incorporates Mamba-based state space blocks alongside traditional convolutions for feature extraction (Ma et al., 2024).
+7. **Geospatial Foundation Models** (`architecture: 'unet_olmo_offline'` and `architecture: 'dual_dinov3'`): 
+   Two recent foundation models, OlmoEarth (Herzog et al., 2026) and DINOv3 (Siméoni et al., 2025), using their pre-trained representations for the next-day wildfire spread prediction task.
+
+#### Multi-Temporal Models:
+1. **Spatiotemporal UNet** (`architecture: 'unet_convlstm'`): 
+   A U-Net featuring a **ConvLSTM** bottleneck for recurrent time-series processing (e.g., 3-day sliding window forecasting).
+2. **UTAE** (`architecture: 'utae'`):
    A temporal attention encoder-decoder baseline adapted from the ICCV 2021 U-TAE model for satellite image time series. This baseline uses the time-series offline samples from `Timeseries_Samples/`, and the generator now stores sequence positions for the temporal attention encoder when you regenerate those samples.
+3. **Simpler yet better video prediction (SimVPv2)** (`architecture: 'simvpv2_spatiotemporal'`): 
+   Originally designed for video prediction, SimVPv2 (Tan et al., 2025) is utilized here as a purely convolutional baseline for spatio-temporal spread forecasting.
+4. **Video Swin-U-Net** (`architecture: 'video_swin_unet'`): 
+   Extended Swin-U-Net by incorporating 3D Video Swin Transformers blocks (Srivastava et al., 2026) to capture joint spatial and temporal dynamics across 3-day sequences.
+5. **A Multi-Modal Architecture** (`architecture: 'frp'`): 
+   A CNN-based multibranch architecture inspired by (Dong et al., 2024), with separate branches for daily weather variables, fire progression sequences, and static features such topography and land cover, followed by late fusion.
+
+#### References
+   Li, B. S., & Rad, R. (2024, June). Wildfire spread prediction in North America using satellite imagery and vision transformer. In *2024 IEEE Conference on Artificial Intelligence (CAI)* (pp. 1536–1541). IEEE.
+
+   Ma, J., Li, F., & Wang, B. (2024). U-mamba: Enhancing long-range dependency for biomedical image segmentation. arXiv preprint arXiv:2401.04722.
+
+   Herzog, H., Bastani, F., Zhang, Y., Tseng, G., Redmon, J., Sablon, H., ... & Beukema, P. (2026). Olmoearth: Stable latent image modeling for multimodal earth observation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (pp. 34806-34817).
+
+   Siméoni, O., Vo, H. V., Seitzer, M., Baldassarre, F., Oquab, M., Jose, C., ... & Bojanowski, P. (2025). Dinov3. arXiv preprint arXiv:2508.10104.
+
+   Tan, C., Gao, Z., Li, S., & Li, S. Z. (2025). SimVPv2: Towards simple yet powerful spatiotemporal predictive learning. IEEE Transactions on Multimedia, 27, 5170-5184.
+
+   Srivastava, M., Saha, E., & Wang, H. (2026). Spatio-Temporal Wildfire Spread Prediction in Canada using a Video Swin-Hybrid-U-Net and Satellite Imagery. arXiv preprint arXiv:2606.20693.
+
+   Dong, Z., Zhao, F., Wang, G., Tian, Y., & Li, H. (2024). A deep learning framework: Predicting fire radiative power from the combination of polar-orbiting and geostationary satellite data during wildfire spread. IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing, 17, 10827-10841.
 
 ### 4.3 Training the Model
 The main entry point for the training pipeline is `main.py`, located at the root of the project. 
@@ -153,7 +195,30 @@ At the end of the `train` loop, `main.py` automatically looks for the `best_chec
 
 If found, it initiates the `test()` protocol on the holdout test split. This step computes the final metrics. Furthermore, it uploads high-resolution visual predictions (Previous Fire Mask, Ground Truth, Model Prediction) to CometML for your final visual analysis.
 
-### 4.5 Logistic Regression Baseline
+### 4.5 Global Evaluation (Optional)
+You can run a global evaluation to test all your models at once. This script evaluates every model across its multiple runs and outputs a consolidated CSV file containing all the grouped metrics.
+
+Run the following command from your project root:
+```bash
+cd /path/to/your/PROJECT_FOLDER/
+python -m src.evaluate --config configs/default.yaml
+
+```
+
+> **⚠️ Important: Directory Structure** > For the script to locate your weights, the files must be named `best_checkpoint.pt` and organized in directories following the `checkpoints_<modelName>_run<N>` naming convention.
+> For example, a UNet evaluated across three runs should look like this:
+> ```text
+> 📁 PROJECT_FOLDER/
+>  ├── 📁 checkpoints_unet_run1/
+>  │    └── 📄 best_checkpoint.pt
+>  ├── 📁 checkpoints_unet_run2/
+>  │    └── 📄 best_checkpoint.pt
+>  └── 📁 checkpoints_unet_run3/
+>       └── 📄 best_checkpoint.pt
+> 
+> ```
+
+### 4.6 Logistic Regression Baseline
 
 This repository also includes an additive classical logistic-regression baseline. It is separate from the PyTorch trainer, reads the precomputed simple samples from `SAMPLE_FOLDER/{train,val,test}`, ignores `delta_t`, extracts a configurable spatial patch around each pixel, and trains `sklearn.linear_model.SGDClassifier(loss="log_loss")`.
 

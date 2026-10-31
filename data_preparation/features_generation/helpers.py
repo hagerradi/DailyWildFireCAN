@@ -1,4 +1,5 @@
 from pyproj import Transformer, CRS
+from data_preparation.data_configs.data_settings import DEG_NAD_CRS, METER_NAD_CRS
 
 def lonlat_to_canada_lambert(df, lon_col='lon', lat_col='lat'):
     """Convert lon/lat in EPSG:4269 (NAD83) to EPSG:3347 (NAD83 / Canada Lambert) in meters.
@@ -16,8 +17,8 @@ def lonlat_to_canada_lambert(df, lon_col='lon', lat_col='lat'):
     if lon_col not in df.columns or lat_col not in df.columns:
         raise ValueError(f"DataFrame must contain columns '{lon_col}' and '{lat_col}'")
 
-    source_crs = CRS.from_epsg(4269)   # NAD83 geographic (degrees)
-    target_crs = CRS.from_epsg(3347)   # NAD83 / Canada Lambert (meters)
+    source_crs = CRS.from_epsg(int(DEG_NAD_CRS))   # NAD83 geographic (degrees)
+    target_crs = CRS.from_epsg(int(METER_NAD_CRS))   # NAD83 / Canada Lambert (meters)
 
     transformer = Transformer.from_crs(source_crs, target_crs, always_xy=True)
 

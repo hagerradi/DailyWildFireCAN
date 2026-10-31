@@ -6,9 +6,9 @@ readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [
     "cdsapi==0.7.7",
-    "cffdrs @ git+https://github.com/cffdrs/cffdrs_py.git@4f773456dec253fbd32933813f15c2e13cc08931",
+    "cffdrs",
     "cfgrib==0.9.15.1",
-    "comet_ml==3.57.3",
+    "comet-ml==3.57.3",
     "dask==2026.3.0",
     "datacube==1.9.17",
     "earthengine-api==1.7.18",
@@ -30,7 +30,7 @@ dependencies = [
     "scikit-image==0.25.2",
     "scikit-learn==1.7.2",
     "scipy==1.15.3",
-    "segmentation_models_pytorch==0.5.0",
+    "segmentation-models-pytorch==0.5.0",
     "shapely==2.1.2",
     "stackstac==0.5.1",
     "torch==2.6.0",
@@ -38,5 +38,8 @@ dependencies = [
     "torchvision==0.21.0",
     "tqdm==4.67.3",
     "xarray==2025.6.1",
-    "xdem==0.2.3"
+    "xdem==0.2.3",
 ]
+
+[tool.uv.sources]
+cffdrs = { git = "https://github.com/cffdrs/cffdrs_py.git", rev = "4f773456dec253fbd32933813f15c2e13cc08931" }

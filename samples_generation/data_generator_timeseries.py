@@ -10,11 +10,17 @@ from tqdm import tqdm
 import gc
 import json
 from collections import OrderedDict
+from datetime import datetime
 
 from src.config import Config
-from samples_generation.data_generator_helper import create_stratified_splits, calculate_h5_statistics
+from samples_generation.data_generator_helper import (create_stratified_splits, 
+                                                      calculate_h5_statistics)
 
 from configs import settings
+
+from samples_generation.samples_configs.samples_settings import (DYNAMIC_FEATURES, STATIC_FEATURES, 
+                                                                 TARGET_YEARS, RANDOM_SEED, 
+                                                                 REMOVE_MISSING_DATA)
 
 class H5FireTimeSeriesDataset(Dataset):
     """
@@ -25,7 +31,10 @@ class H5FireTimeSeriesDataset(Dataset):
                  fire_feature='firearea', patch_size=256, seq_length=3,
                  use_cumuarea_prev=False, use_cumuarea=False, transform=None,
                  normalize=False, stats_dict=None, sat_nodata=0, 
-                 use_cyclical_aspect=False):
+                 use_cyclical_aspect=False, 
+                 return_sat_age=False, 
+                 return_coords=False,
+                 remove_missing_data=False):
         
         self.h5_dir = h5_dir
         self.id_list = [str(fid) for fid in id_list] 
@@ -44,16 +53,20 @@ class H5FireTimeSeriesDataset(Dataset):
         self.use_cumuarea = use_cumuarea            
         self.transform = transform
 
-        # --- NORMALIZATION PARAMS ---
+        # Normalization params
         self.normalize = normalize
         self.stats_dict = stats_dict
         self.sat_nodata = sat_nodata
         
         self.use_cyclical_aspect = use_cyclical_aspect
+        self.return_sat_age = return_sat_age
+        self.return_coords = return_coords
+        self.center_idx = (self.patch_size // 2) - 1
+        self.remove_missing_data = remove_missing_data
         
         # Safety check
         if self.normalize and self.stats_dict is None:
-            raise ValueError("If normalize=True, you must provide the stats_dict!")
+            raise ValueError("If normalize=True, you must provide the stats_dict.")
         
         # +2 to account for BOTH the binary fire mask AND the fireday grid
         base_channels = len(self.dynamic_features) + len(self.static_features) + 2
@@ -62,15 +75,29 @@ class H5FireTimeSeriesDataset(Dataset):
         if self.use_cyclical_aspect and 'aspect' in self.static_features:
             base_channels += 1
 
+        # LANDCOVER CHANNEL ADJUSTMENTS
+        if 'landcover' in self.static_features:
+            base_channels += 7
+        if 'ccrs_landcover' in self.static_features:
+            base_channels += 14
+        if 'annual_ccrs_landcover' in self.static_features:
+            base_channels += 14
+
         self.num_channels = base_channels
+
+        # CCRS MAPPING TENSOR
+        self.ccrs_mapping = torch.full((256,), 15, dtype=torch.long)
+        valid_ccrs_classes = [1, 2, 5, 6, 8, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19]
+        for idx, class_val in enumerate(valid_ccrs_classes):
+            self.ccrs_mapping[class_val] = idx
         
         self.samples = [] 
         self.open_h5_handles = OrderedDict()
-        self.max_open_files = 100
+        self.max_open_files = 500
         
         self._index_files()
 
-    # --- HELPER METHODS ---
+    # Helper Methods
     def _get_expected_date(self, day_group) -> str | None:
         """Extracts the fire day date.
 
@@ -86,6 +113,49 @@ class H5FireTimeSeriesDataset(Dataset):
                 fire_datetime = fire_datetime.decode('utf-8')
             return fire_datetime.split("T")[0]
         return None
+    
+    def _get_sat_age_days(self, day_group, expected_date_str) -> float:
+        """Calculates the gap between fire day and satellite acquisition.
+
+        Args:
+          day_group: the key of the day in the H5 file
+          expected_date_str: the date of the fireday
+
+        Returns:
+            the difference in days between the fireday and the day of the satellite image
+        """
+        if not expected_date_str or "satellite" not in day_group:
+            return 0.0
+            
+        sat_attrs = day_group["satellite"].attrs
+        if "cloud_cover_stats" not in sat_attrs:
+            return 0.0
+            
+        stats_attr = sat_attrs["cloud_cover_stats"]
+        if isinstance(stats_attr, bytes):
+            stats_attr = stats_attr.decode('utf-8')
+            
+        try:
+            stats_list = json.loads(stats_attr)
+            exp_dt = datetime.strptime(expected_date_str, "%Y-%m-%d")
+            
+            min_gap = float('inf')
+            found_valid = False
+            
+            for stat in stats_list:
+                acq_date_str = stat.get("acquisition_date")
+                if acq_date_str:
+                    acq_dt = datetime.strptime(acq_date_str, "%Y-%m-%d")
+                    gap_days = (exp_dt - acq_dt).days
+                    
+                    if gap_days >= 0 and gap_days < min_gap:
+                        min_gap = gap_days
+                        found_valid = True
+            
+            return float(min_gap) if found_valid else 0.0
+            
+        except Exception:
+            return 0.0
 
     def _get_h5_handle(self, fire_id):
         """Helper to manage persistent file handles with an LRU capacity limit.
@@ -138,10 +208,12 @@ class H5FireTimeSeriesDataset(Dataset):
             
             sequence_valid = True
             sequence_fires_list = []
+
+            # TRACKERS
+            center_lon, center_lat = 0.0, 0.0
+            sequence_delta_t = []
             
-            # =======================================================
-            # 1. BUILD INPUT SEQUENCE (T, T+1, T+2 ...)
-            # =======================================================
+            # BUILD INPUT SEQUENCE (T, T+1, T+2 ...)
             for step in range(self.seq_length):
                 curr_dob = start_dob + step
                 curr_key = f"{tile_id}_DOB_{year}_{curr_dob}"
@@ -168,9 +240,21 @@ class H5FireTimeSeriesDataset(Dataset):
                             break
                             
                         # QUALITY MASK CHECK
-                        if "quality_mask" in day_group:
+                        if self.remove_missing_data and "quality_mask" in day_group:
                             sequence_valid = False
                             break
+                            
+                        # CALCULATE SAT AGE
+                        if self.return_sat_age:
+                            exp_date_str = self._get_expected_date(day_group)
+                            dt_days = self._get_sat_age_days(day_group, exp_date_str)
+                            sequence_delta_t.append(dt_days)
+
+                        # EXTRACT COORDS (Only needed on step 0)
+                        if self.return_coords and step == 0:
+                            if f"{tile_id}/coords/theoretical_lon" in f:
+                                center_lon = f[f"{tile_id}/coords/theoretical_lon"][self.center_idx, self.center_idx]
+                                center_lat = f[f"{tile_id}/coords/theoretical_lat"][self.center_idx, self.center_idx]
                             
                 except Exception:
                     sequence_valid = False
@@ -181,9 +265,7 @@ class H5FireTimeSeriesDataset(Dataset):
             if not sequence_valid:
                 continue # Discard sample if any input day is broken/missing
 
-            # =======================================================
-            # 2. CHECK TARGET DAY (T + seq_length)
-            # =======================================================
+            # CHECK TARGET DAY (T + seq_length)
             target_dob = start_dob + self.seq_length
             target_key = f"{tile_id}_DOB_{year}_{target_dob}"
             
@@ -210,7 +292,10 @@ class H5FireTimeSeriesDataset(Dataset):
                 'sequence_fires': sequence_fires_list, # List of lists containing T, T+1, T+2
                 'next_fires': target_fires,            # The target fires for T+3
                 'feature_paths': feature_paths, 
-                'is_sat_flags': is_sat_flags
+                'is_sat_flags': is_sat_flags,
+                'sequence_delta_t': sequence_delta_t,  # 
+                'center_lon': center_lon,              # 
+                'center_lat': center_lat               #
             })
 
     def __len__(self):
@@ -232,43 +317,111 @@ class H5FireTimeSeriesDataset(Dataset):
             
             channel_idx = 0
 
-            # --- Load Dynamics & Satellite ---
+            # # Load Dynamics & Satellite
+            # for path, is_sat in zip(s['feature_paths'], s['is_sat_flags']):
+            #     feat_name = path.split('/')[-1]
+            #     arr_patch = step_day_group[path][:].astype(np.float32)
+            
+            #     if is_sat:
+                    
+            #         if np.isnan(self.sat_nodata):
+            #             valid_mask = ~np.isnan(arr_patch)
+            #         else:
+            #             valid_mask = (arr_patch != self.sat_nodata)
+                    
+            #         if 'SCL' not in feat_name:
+            #             arr_patch = arr_patch * 0.0001
+            #         else:
+            #             arr_patch = arr_patch * 0.1
+            #     else:
+            #         valid_mask = ~np.isnan(arr_patch)
+                
+            #     # Normalization Logic
+            #     if self.normalize and feat_name in self.stats_dict and feat_name != self.fire_feature and not is_sat:
+            #         if feat_name not in ['ndvi', 'evi']:
+            #             mean = self.stats_dict[feat_name]['mean']
+            #             std = self.stats_dict[feat_name]['std']
+            #             arr_patch[valid_mask] = (arr_patch[valid_mask] - mean) / std
+                
+            #     arr_patch[~valid_mask] = 0.0
+                
+            #     # Assign to the specific time step (t_idx)
+            #     x_tensor[t_idx, channel_idx] = torch.from_numpy(arr_patch)
+            #     channel_idx += 1
+
+            # Load Dynamics & Satellite
             for path, is_sat in zip(s['feature_paths'], s['is_sat_flags']):
                 feat_name = path.split('/')[-1]
                 arr_patch = step_day_group[path][:].astype(np.float32)
             
                 if is_sat:
-                    # arr_patch = np.ascontiguousarray(np.flipud(arr_patch))
-                    
                     if np.isnan(self.sat_nodata):
                         valid_mask = ~np.isnan(arr_patch)
                     else:
                         valid_mask = (arr_patch != self.sat_nodata)
                     
-                    if 'SCL' not in feat_name:
+                    if 'scl' not in feat_name.lower() and 'visual' not in feat_name.lower():
                         arr_patch = arr_patch * 0.0001
-                    else:
-                        arr_patch = arr_patch * 0.1
                 else:
                     valid_mask = ~np.isnan(arr_patch)
                 
-                # --- NORMALIZATION LOGIC ---
+                # NORMALIZATION LOGIC (Dynamics)
                 if self.normalize and feat_name in self.stats_dict and feat_name != self.fire_feature and not is_sat:
                     if feat_name not in ['ndvi', 'evi']:
                         mean = self.stats_dict[feat_name]['mean']
                         std = self.stats_dict[feat_name]['std']
                         arr_patch[valid_mask] = (arr_patch[valid_mask] - mean) / std
+
+                # NORMALIZATION LOGIC (SCL and visual)
+                if self.normalize and feat_name in self.stats_dict and feat_name != self.fire_feature and is_sat:
+                    if 'scl' in feat_name.lower():
+                        feat_max = self.stats_dict[feat_name]['max']
+                        feat_min = self.stats_dict[feat_name]['min']
+                        if feat_max > feat_min:
+                            arr_patch[valid_mask] = (arr_patch[valid_mask] - feat_min) / (feat_max - feat_min)
+                        else:
+                            arr_patch[valid_mask] = 0.0
+
+                    if 'visual' in feat_name.lower():
+                        feat_max = self.stats_dict[feat_name]['max']
+                        feat_min = self.stats_dict[feat_name]['min']
+                        if feat_max > feat_min:
+                            arr_patch[valid_mask] = (arr_patch[valid_mask] - feat_min) / (feat_max - feat_min)
+                        else:
+                            arr_patch[valid_mask] = 0.0
                 
                 arr_patch[~valid_mask] = 0.0
-                
-                # FIXED: Assign to the specific time step (t_idx)
                 x_tensor[t_idx, channel_idx] = torch.from_numpy(arr_patch)
                 channel_idx += 1
-            
-            # 3. Load Statics
+
+            # Load Statics
             if self.static_features and f"{tile_id}/static_features" in f_primary:
                 static_group = f_primary[f"{tile_id}/static_features"]
                 for feature in self.static_features:
+                    
+                    # SCANFI LANDCOVER ONE-HOT ENCODING
+                    if feature == 'landcover':
+                        arr_patch = static_group[feature][:].astype(np.int64)
+                        arr_tensor = torch.from_numpy(arr_patch)
+                        mask_255 = (arr_tensor == 255)
+                        mapped_tensor = torch.where(mask_255, torch.tensor(8), arr_tensor - 1)
+                        one_hot = torch.nn.functional.one_hot(mapped_tensor, num_classes=9)
+                        one_hot = one_hot[..., :8].permute(2, 0, 1).float()
+                        x_tensor[t_idx, channel_idx : channel_idx + 8] = one_hot
+                        channel_idx += 8
+                        continue
+
+                    # CCRS LANDCOVER ONE-HOT ENCODING
+                    elif feature in ['ccrs_landcover', 'annual_ccrs_landcover']:
+                        arr_patch = static_group[feature][:].astype(np.int64)
+                        arr_tensor = torch.from_numpy(arr_patch)
+                        mapped_tensor = self.ccrs_mapping[arr_tensor]
+                        one_hot = torch.nn.functional.one_hot(mapped_tensor, num_classes=16)
+                        one_hot = one_hot[..., :15].permute(2, 0, 1).float()
+                        x_tensor[t_idx, channel_idx : channel_idx + 15] = one_hot
+                        channel_idx += 15
+                        continue
+
                     arr_patch = static_group[feature][:].astype(np.float32)
 
                     if feature == 'aspect' and self.use_cyclical_aspect:
@@ -276,26 +429,34 @@ class H5FireTimeSeriesDataset(Dataset):
                         aspect_sin = np.sin(aspect_rad)
                         aspect_cos = np.cos(aspect_rad)
                         
-                        # FIXED: Assign to the specific time step (t_idx)
                         x_tensor[t_idx, channel_idx] = torch.from_numpy(aspect_sin)
                         channel_idx += 1
                         x_tensor[t_idx, channel_idx] = torch.from_numpy(aspect_cos)
                         channel_idx += 1
                         continue
-                    
-                    if self.normalize and feature in self.stats_dict and feature != self.fire_feature:
+
+                    # Percentage / Zero-Inflated Variables (Min-Max Scaling)
+                    elif feature.startswith('prc') or feature == 'closure':
+                        valid_mask = ~np.isnan(arr_patch)
+                        if self.normalize and feature in self.stats_dict:
+                            f_min = self.stats_dict[feature]['min']
+                            f_max = self.stats_dict[feature]['max']
+                            if f_max > f_min:
+                                arr_patch[valid_mask] = (arr_patch[valid_mask] - f_min) / (f_max - f_min)
+                            else:
+                                arr_patch[valid_mask] = 0.0
+
+                    # Continuous Variables like Dem, Slope, Height, Biomass (Z-Score)
+                    elif self.normalize and feature in self.stats_dict and feature != self.fire_feature:
                         valid_mask = ~np.isnan(arr_patch)
                         mean = self.stats_dict[feature]['mean']
                         std = self.stats_dict[feature]['std']
                         arr_patch[valid_mask] = (arr_patch[valid_mask] - mean) / std
                     
-                    # Assign to the specific time step (t_idx)
                     x_tensor[t_idx, channel_idx] = torch.from_numpy(arr_patch)
                     channel_idx += 1
 
-            # ---------------------------------------------------------
-            # 4. Process Fire Masks (Dynamic Aggregation of All Overlaps)
-            # ---------------------------------------------------------
+            # Process Fire Masks (Dynamic Aggregation of All Overlaps)
             curr_fire_mask = torch.zeros((self.patch_size, self.patch_size), dtype=torch.bool)
             fireday_grid = torch.zeros((self.patch_size, self.patch_size), dtype=torch.float32)
             
@@ -332,13 +493,11 @@ class H5FireTimeSeriesDataset(Dataset):
                         
                     curr_fire_mask |= day_mask
                     
-            # FIXED: Assign to the specific time step (t_idx)
+            # Assign to the specific time step (t_idx)
             x_tensor[t_idx, -2] = curr_fire_mask.float()
             x_tensor[t_idx, -1] = fireday_grid
 
-        # ---------------------------------------------------------
-        # B. Determine NEXT DAY mask (Output Label)
-        # ---------------------------------------------------------
+        # Determine NEXT DAY mask (Output Label)
         raw_next_mask = torch.zeros((self.patch_size, self.patch_size), dtype=torch.bool)
         
         for fire_dict in s['next_fires']:
@@ -371,7 +530,20 @@ class H5FireTimeSeriesDataset(Dataset):
             dtype=torch.float32,
         )
 
-        return x_tensor, y_tensor, positions
+        # return x_tensor, y_tensor, positions
+
+        out = [x_tensor, y_tensor, positions]
+
+        if self.return_sat_age:
+            # delta_t is a sequence of length seq_length
+            delta_t_tensor = torch.tensor(s['sequence_delta_t'], dtype=torch.float32)
+            out.append(delta_t_tensor)
+        
+        if self.return_coords:
+            coords_tensor = torch.tensor([s['center_lon'], s['center_lat']], dtype=torch.float32)
+            out.append(coords_tensor)
+        
+        return tuple(out)
     
 def save_dataset_to_disk(dataset, output_base_folder, split_name):
     """Iterates through the dataset and saves each sample as a .pt file.
@@ -391,14 +563,34 @@ def save_dataset_to_disk(dataset, output_base_folder, split_name):
     # Iterate directly through the dataset and save
     for idx in tqdm(range(len(dataset)), desc=f"Generating {split_name}"):
         
-        x_tensor, y_tensor, positions = dataset[idx]
+        # x_tensor, y_tensor, positions = dataset[idx]
         
-        x_np = x_tensor.numpy().astype(np.float16)
-        y_np = y_tensor.numpy().astype(np.uint8)
-        positions_np = positions.numpy().astype(np.uint8)
+        # x_np = x_tensor.numpy().astype(np.float16)
+        # y_np = y_tensor.numpy().astype(np.uint8)
+        # positions_np = positions.numpy().astype(np.uint8)
+
+        # file_path = os.path.join(split_folder, f"sample_{idx}.npz")
+        # np.savez(file_path, x=x_np, y=y_np, positions=positions_np)
+
+        sample_tuple = dataset[idx]
+
+        x_np = sample_tuple[0].numpy().astype(np.float16)
+        y_np = sample_tuple[1].numpy().astype(np.uint8)
+        positions_np = sample_tuple[2].numpy().astype(np.uint8)
+
+        save_kwargs = {'x': x_np, 'y': y_np, 'positions': positions_np}
+        tuple_idx = 3
+
+        if dataset.return_sat_age:
+            save_kwargs['delta_t'] = sample_tuple[tuple_idx].numpy().astype(np.uint8)
+            tuple_idx += 1
+
+        if dataset.return_coords:
+            save_kwargs['coords'] = sample_tuple[tuple_idx].numpy().astype(np.float32)
+            tuple_idx += 1
 
         file_path = os.path.join(split_folder, f"sample_{idx}.npz")
-        np.savez(file_path, x=x_np, y=y_np, positions=positions_np)
+        np.savez(file_path, **save_kwargs)
 
 def generate_timeseries_offline_data(config: Config, seq_length: int) -> None:
     """
@@ -410,19 +602,13 @@ def generate_timeseries_offline_data(config: Config, seq_length: int) -> None:
     """
     
     tc = config.training
+    is_sat_age = True
+    is_coords = True
 
-    dynamic_feats = [
-        'tmax', 'rh', 'ws', 'prec', 'u10', 'v10',
-        'evi', 'ndvi', 
-        's2_B02', 's2_B03', 's2_B04', 's2_B08', 's2_B11', 's2_B12',
-        's2_SCL'
-    ]
-    dynamic_feats = [feat.lower() for feat in dynamic_feats]
-    static_feats = [
-        'dem', 'slope', 'aspect', 'biomass', 'closure', 'prcb', 'prcc'
-    ]
+    dynamic_feats = DYNAMIC_FEATURES
+    static_feats = STATIC_FEATURES
     
-    target_years = ["2020", "2021", "2022", "2023", "2024"] 
+    target_years = TARGET_YEARS
     
     # ---------------------------------------------------------
     # LOAD AND MERGE YEARLY MAPPERS
@@ -473,7 +659,8 @@ def generate_timeseries_offline_data(config: Config, seq_length: int) -> None:
         use_cumuarea_prev=tc.use_cumuarea_prev,
         normalize=False, 
         stats_dict=None, 
-        sat_nodata=np.nan
+        sat_nodata=np.nan,
+        remove_missing_data=REMOVE_MISSING_DATA
     )
 
     # Since multiple fires can exist in one sample, we gather all unique fire_ids that made the cut
@@ -498,7 +685,7 @@ def generate_timeseries_offline_data(config: Config, seq_length: int) -> None:
 
     train_ids, val_ids, test_ids = create_stratified_splits(fire_growth_filtered, 
                                                             train_split=tc.train_split,
-                                                            random_state=42,
+                                                            random_state=RANDOM_SEED,
                                                             overlap_mapper=master_mapper)
     print(len(train_ids), len(val_ids), len(test_ids))
 
@@ -511,7 +698,8 @@ def generate_timeseries_offline_data(config: Config, seq_length: int) -> None:
     stats_dict = calculate_h5_statistics(settings.H5_OUTPUT_FOLDER, 
                                          master_mapper,
                                          train_ids,
-                                         stats_filename="timeseries_dataset_stats.json")
+                                         stats_filename="timeseries_dataset_stats.json",
+                                         remove_missing_data=REMOVE_MISSING_DATA)
 
     common_kwargs = {
         'h5_dir': settings.H5_OUTPUT_FOLDER,
@@ -526,7 +714,10 @@ def generate_timeseries_offline_data(config: Config, seq_length: int) -> None:
         'normalize': True,
         'stats_dict': stats_dict,
         'sat_nodata': np.nan,
-        'use_cyclical_aspect': tc.use_cyclical_aspect
+        'use_cyclical_aspect': tc.use_cyclical_aspect,
+        'return_sat_age': is_sat_age,
+        'return_coords': is_coords,
+        'remove_missing_data': REMOVE_MISSING_DATA
     }
 
     train_dataset = H5FireTimeSeriesDataset( 
@@ -547,6 +738,28 @@ def generate_timeseries_offline_data(config: Config, seq_length: int) -> None:
     print(f'Number of training samples :: {len(train_dataset)}')
     print(f'Number of validation samples :: {len(val_dataset)}')
     print(f'Number of test samples :: {len(test_dataset)}')
+
+    # VERIFICATION
+    if len(test_dataset) > 0:
+        print(f'\n--- Sanity Check: Test Sample 0 ---')
+        sample_out = test_dataset[0]
+        
+        # x_tensor, y_tensor, positions
+        print(f'Shape of X         : {sample_out[0].shape}  <- Expected: (Seq_Length, Channels, H, W)')
+        print(f'Shape of Y         : {sample_out[1].shape}  <- Expected: (H, W)')
+        print(f'Shape of positions : {sample_out[2].shape}  <- Expected: (Seq_Length,)')
+        
+        out_idx = 3
+        if test_dataset.return_sat_age:
+            print(f'Shape of delta_t   : {sample_out[out_idx].shape}  <- Expected: (Seq_Length,)')
+            out_idx += 1
+            
+        if test_dataset.return_coords:
+            coords = sample_out[out_idx].numpy()
+            print(f'Coordinates        : [Lon: {coords[0]:.4f}, Lat: {coords[1]:.4f}]')
+        print(f'-----------------------------------\n')
+    else:
+        print("\n[!] Warning: Test dataset is empty, skipping verification.")
 
     # Save everything directly to your new SAMPLE_FOLDER
     save_dataset_to_disk(train_dataset, settings.TIMESERIES_SAMPLE_FOLDER, "train")

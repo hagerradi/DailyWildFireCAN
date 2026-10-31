@@ -5,6 +5,7 @@ import numpy as np
 from tqdm import tqdm
 
 from configs import settings
+from data_preparation.data_configs.data_settings import DYNAMIC_FEATURES, STATIC_FEATURES
 
 def apply_quality_masks(h5_folder, dynamic_feats, static_feats):
     """Creates a binary quality mask (1 = NaN/Inf, 0 = Clean) per day, per tile.
@@ -134,18 +135,11 @@ def apply_quality_masks(h5_folder, dynamic_feats, static_feats):
     print(f"Problematic Tile-Days (Mask Saved): {days_with_masks}")
 
 if __name__ == "__main__":
-    folder_path = settings.H5_OUTPUT_FOLDER
     
-    selected_bands = [
-        "s2_b02", 
-        "s2_b03", 
-        "s2_b04", 
-        "s2_b08", 
-        "s2_b11", 
-        "s2_b12"
-    ]
-    dynamic_feats = ['tmax', 'rh', 'ws', 'prec', 'evi', 'ndvi', 'u10', 'v10'] + selected_bands
-    static_feats = ['dem', 'slope', 'aspect', 'biomass', 'closure', 'prcc', 'prcb']
+    folder_path = settings.H5_OUTPUT_FOLDER
+
+    dynamic_feats = DYNAMIC_FEATURES
+    static_feats = STATIC_FEATURES
     
     apply_quality_masks(
         h5_folder=folder_path, 

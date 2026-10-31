@@ -5,10 +5,25 @@ import xarray as xr
 import h5py
 
 SCANFI_VARS = {
+    # Original Variables
     'Biomass': 'SCANFI_att_biomass',
     'Closure': 'SCANFI_att_closure',
     'prcC': 'SCANFI_spsCC_otherConiferous',
-    'prcB': 'SCANFI_spsCC_broadleaf'
+    'prcB': 'SCANFI_spsCC_broadleaf',
+    
+    # New Continuous Variables
+    'age': 'SCANFI_age_median',
+    'height': 'SCANFI_att_height',
+    
+    # New Species Crown Closures
+    'prc_balsam_fir': 'SCANFI_spsCC_balsamFir',
+    'prc_black_spruce': 'SCANFI_spsCC_blackSpruce',
+    'prc_douglas_fir': 'SCANFI_spsCC_douglasFir',
+    'prc_jack_pine': 'SCANFI_spsCC_jackPine',
+    'prc_lodgepole_pine': 'SCANFI_spsCC_lodgepolePine',
+    'prc_ponderosa_pine': 'SCANFI_spsCC_ponderosaPine',
+    'prc_tamarack': 'SCANFI_spsCC_tamarack',
+    'prc_white_red_pine': 'SCANFI_spsCC_whiteRedPine'
 }
 
 def extract_scanfi_for_grid(tif_path, easting_grid, northing_grid):

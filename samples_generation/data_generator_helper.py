@@ -6,6 +6,7 @@ import json
 import os
 from collections import defaultdict
 from tqdm import tqdm
+from datetime import datetime
 
 def create_stratified_splits(df, train_split, random_state=42, overlap_mapper=None):
     """Takes a dataframe of fire coordinates, strictly groups overlapping fires to prevent
@@ -145,6 +146,111 @@ def create_stratified_splits(df, train_split, random_state=42, overlap_mapper=No
 
     return train_ids, val_ids, test_ids
 
+def create_splits_by_years(df, train_years, val_years, test_years, year_col='year'):
+    """Splits fires strictly based on provided lists of years.
+    
+    Args:
+      df: the CFSD dataframe.
+      train_years: list of years for the training subset (e.g., [2018, 2019]).
+      val_years: list of years for the validation subset (e.g., [2020]).
+      test_years: list of years for the testing subset (e.g., [2021]).
+      year_col: the name of the column containing the fire year (Default = 'year').
+
+    Returns: 
+      train_ids, val_ids, test_ids: three lists of individual fire IDs.
+    """
+
+    # Force the lists to be integers
+    train_years = [int(y) for y in train_years]
+    val_years = [int(y) for y in val_years]
+    test_years = [int(y) for y in test_years]
+    
+    # Force the dataframe column to be integers during the check
+    train_ids = df[df[year_col].astype(int).isin(train_years)]['ID'].unique().tolist()
+    val_ids = df[df[year_col].astype(int).isin(val_years)]['ID'].unique().tolist()
+    test_ids = df[df[year_col].astype(int).isin(test_years)]['ID'].unique().tolist()
+
+    print(f"Strict Temporal Split -> Train: {len(train_ids)} | Val: {len(val_ids)} | Test: {len(test_ids)}")
+
+    return train_ids, val_ids, test_ids
+
+def create_rotational_splits(
+        df, 
+        n_train_months=3, 
+        n_val_months=1, 
+        n_test_months=1,
+        id_col='ID', 
+        year_col='year', 
+        dob_col='DOB'
+    ):
+    """
+    Splits fires chronologically using a rotating month sequence (e.g., 3 train, 1 val, 1 test).
+    
+    Rules:
+      - Skips months with zero fire starts (inactive months do not count in the rotation).
+      - Fire split is determined strictly by its start month (earliest record for that ID).
+    
+    Args:
+      df: Pandas DataFrame containing fire data.
+      n_train_months: Number of active months for training in each cycle (default 3).
+      n_val_months: Number of active months for validation in each cycle (default 1).
+      n_test_months: Number of active months for testing in each cycle (default 1).
+      id_col: Name of the column containing unique Fire IDs (default 'ID').
+      year_col: Name of the column containing the fire year (default 'year').
+      dob_col: Name of the column containing Day of Burning / Day of Year (default 'DOB').
+      
+    Returns:
+      train_ids, val_ids, test_ids: Three lists of unique fire IDs.
+    """
+    df_copy = df.copy()
+    
+    # Convert year + DOB to a full datetime, then to YYYY-MM Period
+    # %Y%j parses Year + 3-digit Day of Year (e.g., 2021 + 045)
+    df_copy['dates'] = pd.to_datetime(
+        df_copy[year_col].astype(int).astype(str) + 
+        df_copy[dob_col].astype(int).astype(str).str.zfill(3), 
+        format='%Y%j'
+    )
+    df_copy['year_month'] = df_copy['dates'].dt.to_period('M')
+    
+    # Get the START month for every fire ID (earliest record per ID)
+    fire_starts = df_copy.groupby(id_col)['year_month'].min().reset_index()
+    
+    # Extract ONLY active months (months where at least 1 fire started), sorted chronologically
+    active_months = sorted(fire_starts['year_month'].unique())
+    
+    # Create the rotational pattern array (e.g., ['train', 'train', 'train', 'val', 'test'])
+    rotation_pattern = (
+        ['train'] * n_train_months + 
+        ['val'] * n_val_months + 
+        ['test'] * n_test_months
+    )
+    pattern_len = len(rotation_pattern)
+    
+    # Map each active month to a split using modulo indexing
+    month_to_split = {
+        month: rotation_pattern[idx % pattern_len] 
+        for idx, month in enumerate(active_months)
+    }
+    
+    # Assign split to each fire based on its start month
+    fire_starts['split'] = fire_starts['year_month'].map(month_to_split)
+    
+    # Extract IDs for each split
+    train_ids = fire_starts[fire_starts['split'] == 'train'][id_col].unique().tolist()
+    val_ids = fire_starts[fire_starts['split'] == 'val'][id_col].unique().tolist()
+    test_ids = fire_starts[fire_starts['split'] == 'test'][id_col].unique().tolist()
+    
+    # Print diagnostic overview
+    print("="*60)
+    print(f"Rotational Split Summary ({n_train_months} Train | {n_val_months} Val | {n_test_months} Test):")
+    print(f"Total Active Months Processed: {len(active_months)}")
+    print(f"Train Fires: {len(train_ids):,}")
+    print(f"Val Fires:   {len(val_ids):,}")
+    print(f"Test Fires:  {len(test_ids):,}")
+    print("="*60)
+    
+    return train_ids, val_ids, test_ids
 
 def _update_tallies(stats, feat_name, valid_pixels):
     """Helper function to cleanly update running sums (using float64 to prevent overflow).
@@ -167,7 +273,7 @@ def _update_tallies(stats, feat_name, valid_pixels):
     if current_max > stats[feat_name]['max']:
         stats[feat_name]['max'] = current_max
 
-def calculate_h5_statistics(h5_dir, mapper, train_ids, patch_size=256, stats_filename='dataset_stats.json'):
+def calculate_h5_statistics(h5_dir, mapper, train_ids, patch_size=256, stats_filename='dataset_stats.json', remove_missing_data=True):
     """Scans through H5 files based on UNIQUE (Tile, DOB) pairs to compute global stats.
     - Prevents double-counting overlapping fires.
     - Explicitly skips Satellite, NDVI, and EVI for stats generation.
@@ -178,9 +284,10 @@ def calculate_h5_statistics(h5_dir, mapper, train_ids, patch_size=256, stats_fil
       train_ids: the list of training ids
       patch_size: the target grid size (Default value = 256)
       stats_filename: the json file's name to store the stats (Default value = 'dataset_stats.json')
+      remove_missing_data: toggle to skip samples with missing data
 
     Returns:
-
+      statistics dictionnary
     """
     
     stats = defaultdict(lambda: {
@@ -237,7 +344,7 @@ def calculate_h5_statistics(h5_dir, mapper, train_ids, patch_size=256, stats_fil
                 if h != patch_size or w != patch_size:
                     continue 
                     
-                if "quality_mask" in day_group:
+                if remove_missing_data and "quality_mask" in day_group:
                     continue
 
                 # --- PROCESS STATIC FEATURES (Run once per Tile) ---
@@ -270,6 +377,257 @@ def calculate_h5_statistics(h5_dir, mapper, train_ids, patch_size=256, stats_fil
                         
                         if len(valid_pixels) > 0:
                             _update_tallies(stats, feat_name, valid_pixels)
+                
+                # --- PROCESS SATELLITE ---
+                sat_grp = day_group.get('satellite')
+                if sat_grp is not None:
+                    
+                    for feat_name in sat_grp.keys():
+
+                        # if feat_name.lower() in ['s2_scl']:
+                        if 'scl' in feat_name.lower():
+                            
+                            data = sat_grp[feat_name][:]
+                            valid_mask = ~np.isnan(data)
+                            valid_pixels = data[valid_mask].astype(np.float64)
+                            
+                            if len(valid_pixels) > 0:
+                                _update_tallies(stats, feat_name, valid_pixels)
+                        
+                        # if 'visual' in feat_name.lower() and ADD_VISUAL_BAND:
+                            
+                        #     data = sat_grp[feat_name][:]
+                        #     valid_mask = ~np.isnan(data)
+                        #     valid_pixels = data[valid_mask].astype(np.float64)
+                            
+                        #     if len(valid_pixels) > 0:
+                        #         _update_tallies(stats, feat_name, valid_pixels)
+        
+        except OSError:
+            # Safely skips if a specific file happens to be corrupted
+            continue
+
+    # ==========================================
+    # COMPUTE FINAL METRICS
+    # ==========================================
+    final_dict = {}
+    for feat_name, tallies in stats.items():
+        N = tallies['count']
+        if N == 0:
+            print(f"Warning: No valid data found for {feat_name}")
+            continue
+            
+        mean = tallies['sum'] / N
+        variance = (tallies['sum_sq'] / N) - (mean ** 2)
+        std = np.sqrt(max(variance, 0.0))
+        
+        final_dict[feat_name] = {
+            'mean': float(mean),
+            'std': float(std + 1e-8), 
+            'min': float(tallies['min']),
+            'max': float(tallies['max']),
+            'count': int(N)
+        }
+
+    with open(stats_filename, 'w') as out_file:
+        json.dump(final_dict, out_file, indent=4)
+        
+    print(f"Done! Statistics saved to {stats_filename}.")
+    return final_dict
+
+
+def _get_expected_date(day_group) -> str:
+    """Extracts the fire day date."""
+    fire_datetime = day_group.attrs.get("noon_utc") or day_group.attrs.get("start_utc") or day_group.attrs.get("end_utc")
+    if fire_datetime:
+        if isinstance(fire_datetime, bytes):
+            fire_datetime = fire_datetime.decode('utf-8')
+        return fire_datetime.split("T")[0]
+    return None
+
+def _check_sat_quality(day_group, expected_date_str, max_cloud_cover_pct, max_sat_age_days) -> bool:
+    """Validates that ALL satellite acquisitions meet thresholds."""
+    if not expected_date_str or "satellite" not in day_group:
+        return False
+        
+    sat_attrs = day_group["satellite"].attrs
+    if "cloud_cover_stats" not in sat_attrs:
+        return False
+        
+    stats_attr = sat_attrs["cloud_cover_stats"]
+    if isinstance(stats_attr, bytes):
+        stats_attr = stats_attr.decode('utf-8')
+        
+    try:
+        stats_list = json.loads(stats_attr)
+        if not stats_list:
+            return False
+            
+        exp_dt = datetime.strptime(expected_date_str, "%Y-%m-%d")
+        
+        for stat in stats_list:
+            cloud_pct = stat.get("cloud_cover_pct", 100.0)
+            if cloud_pct > max_cloud_cover_pct:
+                return False
+                
+            acq_date_str = stat.get("acquisition_date")
+            if not acq_date_str:
+                return False
+                
+            acq_dt = datetime.strptime(acq_date_str, "%Y-%m-%d")
+            gap_days = (exp_dt - acq_dt).days
+            
+            if gap_days < 0 or gap_days > max_sat_age_days:
+                return False
+                
+        return True
+    except Exception:
+        return False
+
+def calculate_h5_statistics_filtered(h5_dir, mapper, 
+                                     train_ids, 
+                                     patch_size=256, 
+                                     stats_filename='dataset_stats.json', 
+                                     remove_missing_data=True,
+                                     max_cloud_cover_pct=None,
+                                     max_sat_age_days=None):
+    
+    """Scans through H5 files based on UNIQUE (Tile, DOB) pairs to compute global stats.
+    - Prevents double-counting overlapping fires.
+    - Explicitly skips Satellite, NDVI, and EVI for stats generation.
+
+    Args:
+      h5_dir: the folder of H5 files.
+      mapper: the mapper of overlapping fires
+      train_ids: the list of training ids
+      patch_size: the target grid size (Default value = 256)
+      stats_filename: the json file's name to store the stats (Default value = 'dataset_stats.json')
+      remove_missing_data: toggle to skip samples with missing data
+
+    Returns:
+      statistics dictionnary
+    """
+    
+    stats = defaultdict(lambda: {
+        'sum': 0.0, 
+        'sum_sq': 0.0, 
+        'count': 0, 
+        'min': float('inf'), 
+        'max': float('-inf')
+    })
+
+    # Track which static tiles we have already processed to avoid double counting
+    processed_static_tiles = set()
+    
+    # Filter the mapper to ONLY include (Tile, DOB) keys that belong to training fires
+    train_ids_set = set([str(x) for x in train_ids])
+    
+    valid_global_keys = []
+    for global_key, fires_list in mapper.items():
+        # If at least one fire in this tile/day is in the train set, we process the environment
+        if any(str(f['fire_id']) in train_ids_set for f in fires_list):
+            valid_global_keys.append((global_key, fires_list))
+
+    print(f"Processing {len(valid_global_keys)} unique Tile-Day environments...")
+
+    for global_key, fires_list in tqdm(valid_global_keys, desc="Calculating Stats"):
+        
+        # Unpack the global key (e.g., tile_200_126_DOB_2024_195)
+        parts = global_key.split('_DOB_')
+        tile_id = parts[0]
+        
+        # We just need to open ONE fire's H5 file to read the environment for this tile/day
+        primary_fire = fires_list[0]
+        fire_id = primary_fire['fire_id']
+        day_key = primary_fire['day_key']
+        
+        file_path = os.path.join(h5_dir, f"fire_{fire_id}.h5")
+        if not os.path.exists(file_path):
+            continue
+            
+        # ========================================================
+        # OPEN AND AUTO-CLOSE THE FILE
+        # ========================================================
+        try:
+            with h5py.File(file_path, 'r', swmr=True) as f:
+                
+                # --- SIZE CHECK & QUALITY CHECK ---
+                if f"{tile_id}/days/{day_key}" not in f:
+                    continue
+                    
+                day_group = f[f"{tile_id}/days/{day_key}"]
+                
+                sample_feat = list(day_group['features'].keys())[0]
+                h, w = day_group[f'features/{sample_feat}'].shape
+                if h != patch_size or w != patch_size:
+                    continue 
+                    
+                if remove_missing_data and "quality_mask" in day_group:
+                    continue
+
+                # SATELLITE QUALITY CHECK
+                if max_cloud_cover_pct is not None and max_sat_age_days is not None:
+                    exp_date_str = _get_expected_date(day_group)
+                    
+                    # If it fails the check, we skip this tile-day entirely
+                    if not _check_sat_quality(day_group, exp_date_str, max_cloud_cover_pct, max_sat_age_days):
+                        continue
+
+                # --- PROCESS STATIC FEATURES (Run once per Tile) ---
+                if tile_id not in processed_static_tiles and f"{tile_id}/static_features" in f:
+                    static_grp = f[f"{tile_id}/static_features"]
+                    for feat_name in static_grp.keys():
+                        data = static_grp[feat_name][:]
+                        valid_mask = (~np.isnan(data)) & (data != -9999.0)
+                        
+                        # Cast to float64
+                        valid_pixels = data[valid_mask].astype(np.float64)
+                        
+                        if len(valid_pixels) > 0:
+                            _update_tallies(stats, feat_name, valid_pixels)
+                            
+                    processed_static_tiles.add(tile_id)
+
+                # --- PROCESS DYNAMIC FEATURES ---
+                feat_grp = day_group.get('features')
+                if feat_grp is not None:
+                    for feat_name in feat_grp.keys():
+                        
+                        # SKIP NDVI AND EVI
+                        if feat_name.lower() in ['ndvi', 'evi']:
+                            continue
+                            
+                        data = feat_grp[feat_name][:]
+                        valid_mask = ~np.isnan(data)
+                        valid_pixels = data[valid_mask].astype(np.float64)
+                        
+                        if len(valid_pixels) > 0:
+                            _update_tallies(stats, feat_name, valid_pixels)
+                
+                # --- PROCESS SATELLITE ---
+                sat_grp = day_group.get('satellite')
+                if sat_grp is not None:
+                    
+                    for feat_name in sat_grp.keys():
+
+                        # if feat_name.lower() in ['s2_scl']:
+                        if 'scl' in feat_name.lower():
+                            
+                            data = sat_grp[feat_name][:]
+                            valid_mask = ~np.isnan(data)
+                            valid_pixels = data[valid_mask].astype(np.float64)
+                            
+                            if len(valid_pixels) > 0:
+                                _update_tallies(stats, feat_name, valid_pixels)
+                        
+                        # if 'visual' in feat_name.lower() and ADD_VISUAL_BAND:
+                            
+                        #     data = sat_grp[feat_name][:]
+                        #     valid_mask = ~np.isnan(data)
+                        #     valid_pixels = data[valid_mask].astype(np.float64)
+                            
+                        #     if len(valid_pixels) > 0:
+                        #         _update_tallies(stats, feat_name, valid_pixels)
         
         except OSError:
             # Safely skips if a specific file happens to be corrupted

@@ -4,8 +4,8 @@ import torch
 import torch.nn as nn
 import math
 
-class SatelliteAgeBottleneck(nn.Module):
-    """Generates sinusoidal Fourier embeddings to encode time gaps (satellite age)."""
+class SatelliteTimeGapBottleneck(nn.Module):
+    """Generates sinusoidal Fourier embeddings to encode time gaps (satellite time gap)."""
     def __init__(self, fourier_dim=16):
         super().__init__()
         self.fourier_dim = fourier_dim
@@ -32,7 +32,7 @@ class SatelliteAgeBottleneck(nn.Module):
         
         return embedding
 
-class AgeInjectionMLP(nn.Module):
+class TimeGapInjectionMLP(nn.Module):
     """Projects the temporal Fourier embedding to match a network's bottleneck dimension."""
     def __init__(self, fourier_dim, bottleneck_channels):
         super().__init__()

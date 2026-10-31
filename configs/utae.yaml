@@ -1,0 +1,42 @@
+seed: 42
+
+dataset:
+  height: 256
+  width: 256
+  channels: 50
+  num_classes: 1
+
+model:
+  input_channels: 50
+  num_classes: 1
+  hidden_features: [64, 128, 256, 512]
+  use_skip_connections: true
+  use_activation_after_upsampling: false
+  architecture: "utae"
+
+training:
+  batch_size: 16
+  num_epochs: 20
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  train_split: 0.7
+  val_split: 0.15
+  test_split: 0.15
+  num_workers: 4
+  device: "auto"
+  checkpoint_dir: "checkpoints_utae"
+  log_interval: 10
+  use_cumuarea: false
+  use_cumuarea_prev: true
+  downscale: false
+  downscale_factor: 2
+  smooth_mask: false
+  smooth_kernel: 3
+  use_cyclical_aspect: true
+
+comet:
+  enabled: true
+  project_name: ""
+  workspace: ""
+  experiment_name: "utae"
+  experiment_tags: ["utae-baseline", "50-channels", "1-class"]
