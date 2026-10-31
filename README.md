@@ -44,7 +44,7 @@ This is the final data preparation step before model training. At this stage, yo
 
 ### Option 1: Use Pre-compiled Samples (Recommended)
 If you want to skip the data generation process and jump straight to training, you can use our finalized samples.
-Mono- and multi-temporal samples can be downloaded from [here](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN-v1/tree/main/data_samples)
+Mono- and multi-temporal samples can be downloaded from [here](https://huggingface.co/datasets/CanadaWildFireDaily/DailyWildfireCAN-v1/tree/main/)
 Place them inside the `SAMPLE_FOLDER_ADVANCED` (or `TIMESERIES_SAMPLE_FOLDER_ADVANCED`) defined in your `settings.py`, following this exact structure:
 ```text
 SAMPLES/
@@ -58,7 +58,7 @@ SAMPLES/
 ### Option 2: Generate Samples from Scratch
 If you prefer to run the sample generation process yourself, this script will read the raw daily `.h5` files and the JSON tile mappers to compile the finalized samples. 
 
-> ⚠️ **Important Data Requirements:** > To run this process, you must have the `.h5` files, the JSON mappers (fires metadata), and the raw Fire Growth CSV files. All of these raw data files are provided in our Hugging Face repository in the `raw_data` folder: [DailyWildfireCAN-v1](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN-v1).
+> ⚠️ **Important Data Requirements:** > To run this process, you must have the `.h5` files, the JSON mappers (fires metadata), and the raw Fire Growth CSV files. All of these raw data files are provided in our Hugging Face repository in the `raw_data` folder: [DailyWildfireCAN](https://huggingface.co/datasets/CanadaWildFireDaily/DailyWildfireCAN).
 
 Make sure to organize the downloaded files according to the directories defined in your `settings.py`:
 
