@@ -5,6 +5,8 @@ This repository contains the code base for the dataset and the benchmark, DailyW
 Paper preprint: #TODO
 
 Citation: #TODO 
+
+
 ![alt text](figures/Fig1_DailyWildfireCAN.png)
 ---
 
