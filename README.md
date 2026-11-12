@@ -2,10 +2,21 @@
 
 This repository contains the code base for the dataset and the benchmark, DailyWildfireCAN, a dataset for daily wildfire spread prediction.
 
-Paper preprint: #TODO
+Paper preprint: [DailyWildfireCAN: A Dataset and Benchmark for Next-Day Wildfire Spread Prediction in Canada]
+ (https://arxiv.org/abs/2611.14207)
 
-Citation: #TODO 
+Citation: 
 
+```@misc{ettahri2026dailywildfirecandatasetbenchmarknextday,
+      title={DailyWildfireCAN: A Dataset and Benchmark for Next-Day Wildfire Spread Prediction in Canada}, 
+      author={Mahacine Ettahri and Hager Radi Abdelwahed and Toluwaleke Olutayo and Daniel Aloise and Gaétan Marceau Caron},
+      year={2026},
+      eprint={2611.14207},
+      archivePrefix={arXiv},
+      primaryClass={cs.CV},
+      url={https://arxiv.org/abs/2611.14207}, 
+} 
+```
 
 ![alt text](figures/Fig1_DailyWildfireCAN.png)
 ---
