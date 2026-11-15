@@ -7,15 +7,12 @@ Paper preprint: [DailyWildfireCAN: A Dataset and Benchmark for Next-Day Wildfire
 Citation: 
 
 ```
-@misc{ettahri2026dailywildfirecandatasetbenchmarknextday,
-      title={DailyWildfireCAN: A Dataset and Benchmark for Next-Day Wildfire Spread Prediction in Canada}, 
-      author={Mahacine Ettahri and Hager Radi Abdelwahed and Toluwaleke Olutayo and Daniel Aloise and Gaétan Marceau Caron},
-      year={2026},
-      eprint={2611.14207},
-      archivePrefix={arXiv},
-      primaryClass={cs.CV},
-      url={https://arxiv.org/abs/2611.14207}, 
-} 
+@article{dailywildfirecan,
+  title={DailyWildfireCAN: A Dataset and Benchmark for Next-Day Wildfire Spread Prediction in Canada},
+  author={Ettahri, Mahacine and Abdelwahed, Hager Radi and Olutayo, Toluwaleke and Aloise, Daniel and Caron, Ga{\'e}tan Marceau},
+  journal={arXiv preprint arXiv:2611.14207},
+  year={2026}
+}
 ```
 
 ![alt text](figures/Fig1_DailyWildfireCAN.png)
