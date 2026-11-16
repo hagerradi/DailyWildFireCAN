@@ -1,145 +1,84 @@
-# DailyWildfireCAN: A Large-Scale Dataset for Daily Wildfire Spread in Canada
+# 🍁 DailyWildfireCAN: Code for Next-Day Wildfire Spread Prediction in Canada
 
-This repository contains the code base for the dataset and the benchmark, DailyWildfireCAN, a dataset for daily wildfire spread prediction.
+[📄 Paper](https://arxiv.org/abs/2611.14207) · [🌐 Project page](https://dailywildfirecan.github.io) · [🗂️ Dataset](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN) · [🏆 Benchmark checkpoints](https://huggingface.co/DailyWildfireCAN/DailyWildfireCAN-Benchmark)
 
-Paper preprint: [DailyWildfireCAN: A Dataset and Benchmark for Next-Day Wildfire Spread Prediction in Canada](https://arxiv.org/abs/2611.14207)
+This repository contains the code to **build the dataset** (`data_preparation/`, `samples_generation/`) and to **train and evaluate the benchmark models** (`src/`, `main.py`). The dataset content, splits, sample format, channel order and licenses are documented on the [dataset card](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN). Trained checkpoints and results are on the [benchmark card](https://huggingface.co/DailyWildfireCAN/DailyWildfireCAN-Benchmark).
 
-Citation: 
+![DailyWildfireCAN overview](figures/Fig1_DailyWildfireCAN.png)
 
-```
+## Citation
+
+```bibtex
 @article{dailywildfirecan,
   title={DailyWildfireCAN: A Dataset and Benchmark for Next-Day Wildfire Spread Prediction in Canada},
-  author={Ettahri, Mahacine and Abdelwahed, Hager Radi and Olutayo, Toluwaleke and Aloise, Daniel and Caron, Ga{\'e}tan Marceau},
+  author={Ettahri, Mahacine and Abdelwahed, Hager Radi and Olutayo, Toluwaleke and Aloise, Daniel and Caron, Ga{\"e}tan Marceau},
   journal={arXiv preprint arXiv:2611.14207},
   year={2026}
 }
 ```
 
-![alt text](figures/Fig1_DailyWildfireCAN.png)
----
+## Setup
 
-## 🛠️ Part 1 : Path Configuration (settings.py)
-Before running any scripts, open configs/settings.py. This file acts as the central nervous system for the pipeline. You must update the following three variables with their **absolute** paths on your machine:
-
-* `PROJECT_FOLDER`: The absolute path to the root repository folder that contains all of the code (e.g., the src, configs, and data_preparation directories).
-* `DATA_FOLDER`: The absolute path to the directory containing the raw downloaded datasets, structured exactly as shown in Section 1.2 above.
-* `OUTPUT_FOLDER`: The absolute path to the directory where all generated data will be saved. This is where the scripts will output the final .h5 PyTorch datasets.
-
-** Note on Folder Creation:** You only need to manually set up the directories containing the downloaded raw data (like `ERA5/`, `SCANFI/`, etc.). As soon as you run any script in this project, `settings.py` will automatically create the entire required `OUTPUT_FOLDER` structure (including the DEM, Satellite Status, and Metadata directories) if they do not already exist.
-
----
-
-## ⚙️ Part 2: Environment Setup
-
-### 2.1 Virtual Environment
-Create and activate a fresh Python virtual environment:
 ```bash
-# Create the environment
+git clone https://github.com/hagerradi/DailyWildFireCAN && cd DailyWildFireCAN
 python -m venv env_wildfires_spread
-
-# Activate (Linux/Mac)
-source env_wildfires_spread/bin/activate
-
-# Activate (Windows)
-env_wildfires_spread\Scripts\activate
-```
-
-### 2.2 Install Python Dependencies
-Install the required packages:
-```bash
+source env_wildfires_spread/bin/activate   # Windows: env_wildfires_spread\Scripts\activate
 pip install -r requirements.txt
 ```
 
-## 📂 Part 3: Samples Generation
+Edit `configs/settings.py` and set absolute paths for:
 
-This is the final data preparation step before model training. At this stage, you have two options: you can either use our pre-compiled samples directly, or you can run this script to generate them from scratch using the raw data.
+* `PROJECT_FOLDER`: this repository.
+* `DATA_FOLDER`: raw downloaded sources (see [`data_preparation/README.md`](data_preparation/README.md)).
+* `OUTPUT_FOLDER`: generated data. Its subfolders are created automatically the first time any script runs.
 
-### Option 1: Use Pre-compiled Samples (Recommended)
-If you want to skip the data generation process and jump straight to training, you can use our finalized samples.
-Mono- and multi-temporal samples can be downloaded from [here](https://huggingface.co/datasets/CanadaWildFireDaily/DailyWildfireCAN/tree/main/).
-Place them inside the `SAMPLE_FOLDER_ADVANCED` (or `TIMESERIES_SAMPLE_FOLDER_ADVANCED`) defined in your `settings.py`, following this exact structure:
+## 📂 Data
+
+### Option 1 (recommended): pre-built samples
+
+Download `mono_temporal_samples/` or `multi_temporal_samples/` from the [dataset repository](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN) (the card lists sizes and download snippets) and extract each `.tar` into the sample folder from `configs/settings.py`: `SAMPLE_FOLDER` for mono-temporal, `TIMESERIES_SAMPLE_FOLDER` for multi-temporal (the `_ADVANCED` variants are used by the `*_advanced` scripts):
+
 ```text
-SAMPLES/
-   ├── train/
-   ├── val/
-   ├── test_easy/
-   ├── test_medium/
-   └── test_hard/
+Samples/
+├── train/
+├── val/
+├── test_easy/
+├── test_medium/
+└── test_hard/
 ```
 
-### Option 2: Generate Samples from Scratch
-If you prefer to run the sample generation process yourself, this script will read the raw daily `.h5` files and the JSON tile mappers to compile the finalized samples. 
+The normalization statistics (`training_stats_*.json`) are in the same repository.
 
-> ⚠️ **Important Data Requirements:** > To run this process, you must have the `.h5` files, the JSON mappers (fires metadata), and the raw Fire Growth CSV files. All of these raw data files are provided in our Hugging Face repository in the `raw_data` folder: [DailyWildfireCAN](https://huggingface.co/datasets/CanadaWildFireDaily/DailyWildfireCAN).
+### Option 2: generate samples from the raw data
 
-Make sure to organize the downloaded files according to the directories defined in your `settings.py`:
+Download `raw_data/` from the dataset repository and place it as follows:
 
-**1. Fire Growth CSVs:** Place these in your `BASE_FOLDER`. The structure must look exactly like this:
-```text
-└── BASE_FOLDER/
-    ├── Firegrowth_pts_v1_1_2024/Firegrowth_pts_v1_1_2024.csv
-    ├── Firegrowth_pts_v1_1_2023/Firegrowth_pts_v1_1_2023.csv
-    ├── Firegrowth_pts_v1_1_2022/Firegrowth_pts_v1_1_2022.csv
-    ├── Firegrowth_pts_v1_1_2021/Firegrowth_pts_v1_1_2021.csv
-    ├── Firegrowth_pts_v1_1_2020/Firegrowth_pts_v1_1_2020.csv
-    ├── Firegrowth_pts_v1_1_2019/Firegrowth_pts_v1_1_2019.csv
-    ├── Firegrowth_pts_v1_1_2018/Firegrowth_pts_v1_1_2018.csv
-    └── Firegrowth_pts_v1_1_2017/Firegrowth_pts_v1_1_2017.csv
-```
+| Raw data | Destination (`configs/settings.py`) |
+|---|---|
+| `fire_data/*.h5` | `H5_OUTPUT_FOLDER` |
+| `metadata_fires_per_year/*.json` | `METADATA_FOLDER` |
+| `fire_growth_points_CFSDS/` (one `Firegrowth_pts_v1_1_<year>/` folder per year) | `BASE_FOLDER` |
 
-**2. JSON Mappers:** Place these in your `METADATA_FOLDER`.
-```text
-└── METADATA_FOLDER/
-    ├── tile_dob_mapper_2024.json
-    ├── tile_dob_mapper_2023.json
-    ├── tile_dob_mapper_2022.json
-    ├── tile_dob_mapper_2021.json
-    ├── tile_dob_mapper_2020.json
-    ├── tile_dob_mapper_2019.json
-    ├── tile_dob_mapper_2018.json
-    └── tile_dob_mapper_2017.json
-```
-
-**3. H5 Files:** Place these in your `H5_OUTPUT_FOLDER`.
-
-> **⚙️ Customizing Sample Generation:**
-> The default variables for feature selection (dynamic/static variables), target years, and the time-series sequence length (default is 3) are pre-configured. If you need to modify any of these before generating your data, edit the settings file located at:
-> `samples_generation/samples_configs/samples_settings.py`
-
-This step handles the **Train/Validation/Test splitting** using the CSV fire growth data. It uses the tile mappers to guarantee that geographically overlapping fires are kept strictly within the same fold, ensuring zero spatial data leakage between your training and testing sets.
-
-To generate the dataset, run the following command from the root of your project:
+Then run from the project root:
 
 ```bash
-cd /path/to/your/PROJECT_FOLDER/
-
-python -m samples_generation.data_generator_main --config configs/default.yaml --type simple
+python -m samples_generation.data_generator_main --config configs/default.yaml --type simple      # mono-temporal
+python -m samples_generation.data_generator_main --config configs/default.yaml --type timeseries  # multi-temporal
 ```
 
-### Script Arguments:
-* `--config`: The path to your configuration file (e.g., `configs/default.yaml`).
-* `--type`: The formatting style of the generated samples. 
-  * `choices=["simple", "timeseries"]`
-  * **`simple`**: Generates standard single-step spatial inputs (Day $T \rightarrow$ Predict Day $T+1$). Best for standard U-Net architectures.
-  * **`timeseries`**: Generates sequential temporal inputs (e.g., Days $T, T+1, T+2 \rightarrow$ Predict Day $T+3$). Best for spatio-temporal architectures like ConvLSTM.
+Feature selection, target years and sequence length (default 3) are set in `samples_generation/samples_configs/samples_settings.py`. The splitting logic, spatial-leakage guarantees and `.npz` keys are described on the dataset card. Normalization statistics are computed on the training split only and saved as a `.json` next to the samples.
 
-**Key Execution Notes:**
-* **Dataset Normalization:** During generation, the script automatically calculates the global mean and standard deviation for all features across the training split and saves a `.json` file. This ensures the validation and test sets are normalized exclusively using training statistics.
-* **Output Location:** The script saves each generated sample as a numpy (`.npz`) file inside designated split subfolders (e.g., `train`, `val`, `test_easy`, `test_medium`, `test_hard`) within either your `SAMPLE_FOLDER` or `TIMESERIES_SAMPLE_FOLDER`. Each file contains a dictionary with the following:
-  * `x`: The input features.
-  * `y`: The ground truth target mask.
-  * `delta_t`: The satellite image age in days (included for `simple` samples only).
-  * `positions`: The sequence positions (included for `timeseries` samples only).
-* **Optimization Note:** It is possible to build a PyTorch Dataset that reads directly from the raw daily `.h5` files during training using the code provided in `samples_generation/data_generator.py` and `samples_generation/data_generator_timeseries.py`. However, we pre-compute and save these ready-to-batch `.npz` arrays purely for optimization purposes to significantly accelerate the training loop and maximize GPU utilization.
+To rebuild the raw `.h5` files from the original sources (ERA5-Land, SCANFI, ASTER, Sentinel-2, etc.), see [`data_preparation/README.md`](data_preparation/README.md).
 
-## 🤖 Part 4: Modeling
+## 🤖 Modeling
 
-With the samples available, the model is ready to train.
 
-### 4.1 Configuration (`configs/default.yaml`)
+Pre-trained checkpoints and AUC-PR results for these models are on the [benchmark card](https://huggingface.co/DailyWildfireCAN/DailyWildfireCAN-Benchmark).
+
+### Configuration (`configs/default.yaml`)
 All training hyperparameters, hardware settings, and logging preferences are centralized in `configs/default.yaml`. Before training, you can adjust this file to suit your needs.
 
-### 4.2 Model Selection & Customization
+### Model Selection & Customization
 Multiple model architectures are implemented in the `src/models/` directory to handle different temporal and spatial requirements. 
 
 To switch between architectures (which will automatically configure the corresponding dataloaders, such as swapping from single-day static prediction to a 3-day sliding window), open your `configs/default.yaml` and update the `architecture` parameter under the `model` section to one of the following options:
@@ -187,7 +126,7 @@ To switch between architectures (which will automatically configure the correspo
 
    Dong, Z., Zhao, F., Wang, G., Tian, Y., & Li, H. (2024). A deep learning framework: Predicting fire radiative power from the combination of polar-orbiting and geostationary satellite data during wildfire spread. IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing, 17, 10827-10841.
 
-### 4.3 Training the Model
+### Training the Model
 The main entry point for the training pipeline is `main.py`, located at the root of the project. 
 
 To run the training loop locally:
@@ -202,12 +141,12 @@ python -m main --config configs/default.yaml
 * **Automatic Checkpointing:** The `Trainer` monitors the Validation IoU. Whenever the model improves, it automatically overwrites and saves `best_checkpoint.pt` to your configured `checkpoint_dir`.
 * **Comet.ml Integration:** If `enabled: true` in your config, the pipeline will automatically log learning rates, loss curves, and epoch-by-epoch evaluation metrics directly to your Comet dashboard. It also uploads visual grid predictions at the end of epochs so you can watch the model learn.
 
-### 4.4 Automatic Evaluation (Testing)
+### Automatic Evaluation (Testing)
 At the end of the `train` loop, `main.py` automatically looks for the `best_checkpoint.pt` generated during training. 
 
 If found, it initiates the `test()` protocol on the holdout test split. This step computes the final metrics. Furthermore, it uploads high-resolution visual predictions (Previous Fire Mask, Ground Truth, Model Prediction) to CometML for your final visual analysis.
 
-### 4.5 Global Evaluation (Optional)
+### Global Evaluation (Optional)
 You can run a global evaluation to test all your models at once. This script evaluates every model across its multiple runs and outputs a consolidated CSV file containing all the grouped metrics.
 
 Run the following command from your project root:
@@ -217,7 +156,9 @@ python -m src.evaluate --config configs/default.yaml
 
 ```
 
-> **⚠️ Important: Directory Structure** > For the script to locate your weights, the files must be named `best_checkpoint.pt` and organized in directories following the `checkpoints_<modelName>_run<N>` naming convention.
+> **⚠️ Note:** the released [benchmark checkpoints](https://huggingface.co/DailyWildfireCAN/DailyWildfireCAN-Benchmark) are named `checkpoints_<model>_run_<N>` and are grouped in folders such as `unet_with_time_gap`. The script accepts both `run<N>` and `run_<N>`, but `<model>` must be the `architecture` value (e.g. `unet_time_gap`), so move the checkpoint folders next to each other in the project root.
+>
+> **Directory Structure:** For the script to locate your weights, the files must be named `best_checkpoint.pt` and organized in directories following the `checkpoints_<modelName>_run<N>` naming convention.
 > For example, a UNet evaluated across three runs should look like this:
 > ```text
 > 📁 PROJECT_FOLDER/
@@ -230,7 +171,7 @@ python -m src.evaluate --config configs/default.yaml
 > 
 > ```
 
-### 4.6 Logistic Regression Baseline
+### Logistic Regression Baseline
 
 This repository also includes an additive classical logistic-regression baseline. It is separate from the PyTorch trainer, reads the precomputed simple samples from `SAMPLE_FOLDER/{train,val,test}`, ignores `delta_t`, extracts a configurable spatial patch around each pixel, and trains `sklearn.linear_model.SGDClassifier(loss="log_loss")`.
 

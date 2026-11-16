@@ -198,9 +198,12 @@ def main():
         # Iterate over the 3 runs
         for run in runs:
             # Construct folder name: e.g., checkpoints_unet_run1
+            # The released Hugging Face checkpoints use checkpoints_unet_run_1 instead.
             folder_name = f"checkpoints_{arch}_run{run}"
-
             ckpt_path = os.path.join(checkpoint_base_dir, folder_name, "best_checkpoint.pt")
+            if not os.path.exists(ckpt_path):
+                folder_name = f"checkpoints_{arch}_run_{run}"
+                ckpt_path = os.path.join(checkpoint_base_dir, folder_name, "best_checkpoint.pt")
             
             if not os.path.exists(ckpt_path):
                 print(f"[!] Warning: Checkpoint not found at {ckpt_path}. Skipping.")

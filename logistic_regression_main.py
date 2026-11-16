@@ -4,7 +4,7 @@ from src.baselines.logistic_regression import run_from_config
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="CanadaWildFireDaily logistic-regression baseline.")
+    parser = argparse.ArgumentParser(description="DailyWildfireCAN logistic-regression baseline.")
     parser.add_argument(
         "--config",
         type=str,
