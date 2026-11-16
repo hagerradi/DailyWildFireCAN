@@ -12,7 +12,7 @@ from src.config import Config
 from configs import settings
 
 # Dataloders
-from src.dataloader_advancel_labels import get_dataloaders_advanced_labels
+from src.dataloader_labels import get_dataloaders_with_labels
 
 # Models
 from src.models import unet
@@ -79,7 +79,7 @@ def run_variation_analysis(config: Config, uncertainty_mode) -> None:
     
     if mc.architecture == 'unet':
 
-        train_loader, val_loader, test_space_loader, test_time_loader, test_spacetime_loader =  get_dataloaders_advanced_labels(config, 
+        train_loader, val_loader, test_space_loader, test_time_loader, test_spacetime_loader =  get_dataloaders_with_labels(config, 
                                                                             is_sat_age=False,
                                                                             uncertainty_mode=uncertainty_mode)
 
@@ -93,7 +93,7 @@ def run_variation_analysis(config: Config, uncertainty_mode) -> None:
     
     elif mc.architecture == 'unet_olmo_offline':
         
-        train_loader, val_loader, test_space_loader, test_time_loader, test_spacetime_loader =  get_dataloaders_advanced_labels(config, 
+        train_loader, val_loader, test_space_loader, test_time_loader, test_spacetime_loader =  get_dataloaders_with_labels(config, 
                                                                     is_sat_age=False,
                                                                     is_coords=False,
                                                                     is_loc_emb=False,

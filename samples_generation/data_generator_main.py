@@ -27,13 +27,12 @@ def main():
     config = Config.from_yaml(args.config)
 
     if args.type == "simple":
-        print("Starting offline data generation for SIMPLE dataset...")
+        print("Starting offline data generation for SIMPLE dataset (with ROTATIONS)...")
         generate_simple_offline_data(config)
         
     elif args.type == "timeseries":
-        print("Starting offline data generation for TIME-SERIES dataset...")
+        print("Starting offline data generation for TIME-SERIES dataset (with ROTATIONS)...")
         generate_timeseries_offline_data(config, seq_length=SEQUENCE_LENGTH)
-
 
 if __name__ == "__main__":
     main()

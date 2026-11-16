@@ -58,6 +58,8 @@ FEATURE_SETS: dict[str, tuple[int, ...]] = {
     "environment_only": tuple(range(23)),
 }
 
+TEST_SPLITS = ("test_easy", "test_medium", "test_hard")
+
 
 @dataclass
 class DataConfig:
@@ -222,20 +224,23 @@ def run_from_config(config_path: str | Path) -> None:
     if best_model is None or best_w is None:
         raise RuntimeError("No logistic-regression model was trained.")
 
-    print("\n--- Evaluating selected model on full test grids ---")
-    test_metrics = evaluate_models_on_full_split(
-        models=[best_model],
-        model_labels=[f"W={best_w}"],
-        scaler=scaler,
-        config=config,
-        sample_folder=sample_folder,
-        split="test",
-        channel_indices=channel_indices,
-        cache_dir=cache_dir,
-    )[0]
+    test_metrics: dict[str, dict[str, Any]] = {}
+    for split in TEST_SPLITS:
+        print(f"\n--- Evaluating selected model on full {split} grids ---")
+        test_metrics[split] = evaluate_models_on_full_split(
+            models=[best_model],
+            model_labels=[f"W={best_w}"],
+            scaler=scaler,
+            config=config,
+            sample_folder=sample_folder,
+            split=split,
+            channel_indices=channel_indices,
+            cache_dir=cache_dir,
+        )[0]
 
     print(f"\nSelected W={best_w} by validation AUC-PR={best_val_auc_pr:.6f}")
-    print_metrics("Test", test_metrics)
+    for split, metrics in test_metrics.items():
+        print_metrics(split, metrics)
 
     write_csv(output_dir / "w_sweep_metrics.csv", sweep_rows)
     write_json(output_dir / "w_sweep_metrics.json", sweep_rows)
@@ -288,7 +293,7 @@ def resolve_sample_folder(configured: str | None) -> Path:
     path = Path(os.path.expandvars(os.path.expanduser(raw))).resolve()
     if not path.exists():
         raise FileNotFoundError(f"Sample folder does not exist: {path}")
-    for split in ("train", "val", "test"):
+    for split in ("train", "val", *TEST_SPLITS):
         split_path = path / split
         if not split_path.exists():
             raise FileNotFoundError(f"Expected split folder does not exist: {split_path}")
@@ -602,7 +607,9 @@ def evaluate_models_on_full_split(
     if len(models) != len(model_labels):
         raise ValueError("models and model_labels must have the same length.")
 
-    files = split_files(sample_folder, split, getattr(config.sampling.max_files_per_split, split))
+    # All test splits share the `test` file limit.
+    limit_key = "test" if split.startswith("test") else split
+    files = split_files(sample_folder, split, getattr(config.sampling.max_files_per_split, limit_key))
     first_x, first_mask = load_sample(files[0])
     height, width = first_mask.shape
     pixels_per_sample = height * width

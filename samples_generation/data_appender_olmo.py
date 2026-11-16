@@ -182,7 +182,7 @@ def generate_offline_olmo_embeddings(data_folder: str):
 
 if __name__ == "__main__":
     
-    TARGET_FOLDER = settings.SAMPLE_FOLDER_ADVANCED.replace("v1", "v2")
+    TARGET_FOLDER = settings.SAMPLE_FOLDER.replace("v1", "v2")
     print(f'Target folder : {TARGET_FOLDER}')
     
     generate_offline_olmo_embeddings(TARGET_FOLDER)

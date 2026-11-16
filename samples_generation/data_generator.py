@@ -14,11 +14,12 @@ from datetime import datetime
 from collections import OrderedDict
 
 from src.config import Config
-from samples_generation.data_generator_helper import create_stratified_splits, calculate_h5_statistics
+from samples_generation.data_generator_helper import calculate_h5_statistics
+from samples_generation.data_generator_utils import lonlat_to_canada_lambert, append_tile_coordinates, assign_spatial_regions_by_fire_id, select_stratified_test_clusters, analyze_cluster_stats, apply_spatial_buffer, generate_experiment_splits
 
 from configs import settings
 
-from samples_generation.samples_configs.samples_settings import DYNAMIC_FEATURES, STATIC_FEATURES, TARGET_YEARS, RANDOM_SEED, REMOVE_MISSING_DATA
+from samples_generation.samples_configs.samples_settings import DYNAMIC_FEATURES, STATIC_FEATURES, TARGET_YEARS, RANDOM_SEED, REMOVE_MISSING_DATA, HOLDOUT_YEAR, N_CLUSTERS
 
 class H5FireSimpleDataset(Dataset):
     
@@ -611,8 +612,18 @@ def save_dataset_to_disk(dataset, output_base_folder, split_name):
 
         file_path = os.path.join(split_folder, f"sample_{idx}.npz")
         
-        np.savez(file_path, **save_kwargs)
+        # np.savez(file_path, **save_kwargs)
+        np.savez_compressed(file_path, **save_kwargs)
 
+def get_retained_fire_ids(dataset):
+    retained_ids = set()
+    for s in dataset.samples:
+        for f_dict in s['curr_fires']:
+            retained_ids.add(f_dict['fire_id'])
+        for f_dict in s['next_fires']:
+            retained_ids.add(f_dict['fire_id'])
+    retained_ids = sorted(list(retained_ids))
+    return retained_ids
 
 def generate_simple_offline_data(config: Config) -> None:
     """
@@ -631,7 +642,7 @@ def generate_simple_offline_data(config: Config) -> None:
     static_feats = STATIC_FEATURES
     target_years = TARGET_YEARS
 
-    print('-------- INFO (SAMPLES with LANDCOVER) --------')
+    print('-------- INFO (SAMPLES) --------')
     print(dynamic_feats)
     print(static_feats)
     print(target_years)
@@ -657,38 +668,82 @@ def generate_simple_offline_data(config: Config) -> None:
     valid_ids = fire_growth_combined['ID'].unique()
     print(len(valid_ids))
 
-    # ---------------------------------------------------------
-    # FILTER VALID IDs
-    # ---------------------------------------------------------
-    overall_dataset = H5FireSimpleDataset(
-        h5_dir=settings.H5_OUTPUT_FOLDER, id_list=valid_ids, mapper=master_mapper,
-        dynamic_features=dynamic_feats, static_features=static_feats,
-        fire_feature="cumuarea", patch_size=settings.GRID_SIZE,
-        use_cumuarea=tc.use_cumuarea, use_cumuarea_prev=tc.use_cumuarea_prev,
-        normalize=False, stats_dict=None, sat_nodata=np.nan,
-        remove_missing_data=REMOVE_MISSING_DATA,
-        return_coords=is_coords,
-        return_date=is_fire_date
-    )
-    
-    retained_ids = set()
-    for s in overall_dataset.samples:
-        for f_dict in s['curr_fires']:
-            retained_ids.add(f_dict['fire_id'])
-        for f_dict in s['next_fires']:
-            retained_ids.add(f_dict['fire_id'])
-    retained_ids = sorted(list(retained_ids))
-
-    print(len(retained_ids))
+    retained_ids = valid_ids
     
     fire_growth_filtered = fire_growth_combined[fire_growth_combined['ID'].astype(str).isin(retained_ids)]
 
-    train_ids, val_ids, test_ids = create_stratified_splits(
-        fire_growth_filtered, train_split=tc.train_split, random_state=RANDOM_SEED, overlap_mapper=master_mapper
-    )
+    print('lonlat_to_canada_lambert')
+    fire_growth_filtered, _ = lonlat_to_canada_lambert(fire_growth_filtered, 
+                                                       lon_col=settings.LON_COL, 
+                                                       lat_col=settings.LAT_COL)
+    print('\n')
+
+    print('append_tile_coordinates')
+    fire_growth_filtered = append_tile_coordinates(fire_growth_filtered, 
+                                                   grid_size=settings.GRID_SIZE, 
+                                                   pixel_size=settings.PIXEL_SIZE, 
+                                                   x_col=settings.X_COL, 
+                                                   y_col=settings.Y_COL)
+    print('\n')
+
+    print('assign_spatial_regions_by_fire_id')
+    fire_growth_filtered =  assign_spatial_regions_by_fire_id(fire_growth_filtered, 
+                                                              fire_id_col='ID', 
+                                                              n_regions=N_CLUSTERS)
+    print('\n')
+
+    print('analyze_cluster_stats')
+    cluster_summary = analyze_cluster_stats(fire_growth_filtered, holdout_year=2024)
+    print('\n')
+
+    print('select_stratified_test_clusters')
+    test_clusters = select_stratified_test_clusters(cluster_summary, 
+                                                    fire_growth_filtered, 
+                                                    holdout_year=int(HOLDOUT_YEAR), 
+                                                    fire_id_col='ID', 
+                                                    min_fires=10, 
+                                                    min_holdout_fires=30)
+    print('\n')
+
+    print('apply_spatial_buffer')
+    fire_growth_filtered = apply_spatial_buffer(fire_growth_filtered, test_clusters, fire_id_col='ID', buffer_tiles=2)
+    print('\n')
+
+    print('generate_experiment_splits')
+    splits_dict = generate_experiment_splits(fire_growth_filtered, 
+                                             holdout_year=int(HOLDOUT_YEAR), 
+                                             holdout_clusters=test_clusters)
+    print('\n')
+
+    train_ids = splits_dict['train_ids']
+    val_ids = splits_dict['val_ids']
+    test_space_ids = splits_dict['test_space_ids']
+    test_time_ids = splits_dict['test_time_ids']
+    test_spacetime_ids = splits_dict['test_spacetime_ids']
 
     del dfs, fire_growth_combined, fire_growth_filtered
-    gc.collect() 
+    gc.collect()
+
+    # Pretrain dataset
+    pretrain_dataset = H5FireSimpleDataset(
+            h5_dir=settings.H5_OUTPUT_FOLDER, 
+            id_list=train_ids, 
+            mapper=master_mapper,
+            dynamic_features=dynamic_feats, 
+            static_features=static_feats,
+            fire_feature="cumuarea", 
+            patch_size=settings.GRID_SIZE,
+            use_cumuarea=tc.use_cumuarea, 
+            use_cumuarea_prev=tc.use_cumuarea_prev,
+            normalize=False, 
+            stats_dict=None, 
+            sat_nodata=np.nan,
+            remove_missing_data=REMOVE_MISSING_DATA,
+            return_coords=is_coords,
+            return_date=is_fire_date
+        )
+    pretrain_ids = get_retained_fire_ids(pretrain_dataset)
+    print(f'Pre-train IDS : {len(pretrain_ids)}')
 
     # ---------------------------------------------------------
     # CALCULATE STATS
@@ -696,22 +751,30 @@ def generate_simple_offline_data(config: Config) -> None:
     stats_dict = calculate_h5_statistics(
         settings.H5_OUTPUT_FOLDER, 
         master_mapper,
-        train_ids,
-        stats_filename="simple_dataset_stats_3_years_v1.json",
+        # train_ids,
+        pretrain_ids,
+        stats_filename="simple_dataset_stats_8_years_reb_v1.json",
         remove_missing_data=REMOVE_MISSING_DATA
     )
-    # stats_filepath = "simple_dataset_stats_3_years_v1.json"
+    # stats_filepath = "simple_dataset_stats_8_years_reb_v1.json"
     # print(f"Loading statistics directly from {stats_filepath}...")
     # with open(stats_filepath, "r") as f:
     #     stats_dict = json.load(f)
 
     common_kwargs = {
-        'h5_dir': settings.H5_OUTPUT_FOLDER, 'mapper': master_mapper,
-        'dynamic_features': dynamic_feats, 'static_features': static_feats,
-        'fire_feature': "cumuarea", 'patch_size': settings.GRID_SIZE,
-        'use_cumuarea': tc.use_cumuarea, 'use_cumuarea_prev': tc.use_cumuarea_prev,
-        'normalize': True, 'stats_dict': stats_dict, 'sat_nodata': np.nan,
-        'use_cyclical_aspect': tc.use_cyclical_aspect, 'return_sat_age': is_sat_age,
+        'h5_dir': settings.H5_OUTPUT_FOLDER, 
+        'mapper': master_mapper,
+        'dynamic_features': dynamic_feats, 
+        'static_features': static_feats,
+        'fire_feature': "cumuarea", 
+        'patch_size': settings.GRID_SIZE,
+        'use_cumuarea': tc.use_cumuarea, 
+        'use_cumuarea_prev': tc.use_cumuarea_prev,
+        'normalize': True, 
+        'stats_dict': stats_dict, 
+        'sat_nodata': np.nan,
+        'use_cyclical_aspect': tc.use_cyclical_aspect, 
+        'return_sat_age': is_sat_age,
         'remove_missing_data': REMOVE_MISSING_DATA,
         'return_coords': is_coords,
         'return_date': is_fire_date
@@ -722,32 +785,43 @@ def generate_simple_offline_data(config: Config) -> None:
     # ---------------------------------------------------------
     train_dataset = H5FireSimpleDataset(id_list=train_ids, **common_kwargs)
     print(f'Number of training samples {len(train_dataset)}')
+    print(f'Trains IDS : {len(get_retained_fire_ids(train_dataset))}')
 
     val_dataset = H5FireSimpleDataset(id_list=val_ids, **common_kwargs)
     print(f'Number of validation samples {len(val_dataset)}')
+    print(f'Val IDS : {len(get_retained_fire_ids(val_dataset))}')
 
-    test_dataset = H5FireSimpleDataset(id_list=test_ids, **common_kwargs)
-    print(f'Number of test samples {len(test_dataset)}')
+    test_space_dataset = H5FireSimpleDataset(id_list=test_space_ids, **common_kwargs)
+    print(f'Number of test space samples {len(test_space_dataset)}')
+    print(f'Test-Space IDS : {len(get_retained_fire_ids(test_space_dataset))}')
+
+    test_time_dataset = H5FireSimpleDataset(id_list=test_time_ids, **common_kwargs)
+    print(f'Number of test time samples {len(test_time_dataset)}')
+    print(f'Test-Time IDS : {len(get_retained_fire_ids(test_time_dataset))}')
+
+    test_spacetime_dataset = H5FireSimpleDataset(id_list=test_spacetime_ids, **common_kwargs)
+    print(f'Number of test spacetime samples {len(test_spacetime_dataset)}')
+    print(f'Test-Space#Time IDS : {len(get_retained_fire_ids(test_spacetime_dataset))}')
 
     # ---------------------------------------------------------
     # VERIFICATION
     # ---------------------------------------------------------
-    sample_out = test_dataset[0]
+    sample_out = test_spacetime_dataset[0]
     print(f'\nVerification:')
     print(f'Shape of X : {sample_out[0].shape}')
     print(f'Shape of Y : {sample_out[1].shape}')
     
     out_idx = 2
-    if test_dataset.return_sat_age:
+    if test_spacetime_dataset.return_sat_age:
         print(f'Satellite age : {sample_out[out_idx].item()} days')
         out_idx += 1
     
-    if test_dataset.return_coords:
+    if test_spacetime_dataset.return_coords:
         coords = sample_out[out_idx].numpy()
         print(f'Coordinates   : [Lon: {coords[0]:.4f}, Lat: {coords[1]:.4f}]')
         out_idx += 1
     
-    if test_dataset.return_date:
+    if test_spacetime_dataset.return_date:
         f_date = sample_out[out_idx].numpy()
         print(f'Fire Date     : {f_date[0]}-{f_date[1]:02d}-{f_date[2]:02d}')
 
@@ -757,6 +831,406 @@ def generate_simple_offline_data(config: Config) -> None:
     
     save_dataset_to_disk(train_dataset, samples_folder, "train")
     save_dataset_to_disk(val_dataset, samples_folder, "val")
-    save_dataset_to_disk(test_dataset, samples_folder, "test")
+    save_dataset_to_disk(test_space_dataset, samples_folder, "test_space")
+    save_dataset_to_disk(test_time_dataset, samples_folder, "test_time")
+    save_dataset_to_disk(test_spacetime_dataset, samples_folder, "test_spacetime")
     
     print("\nAll data successfully generated and saved to disk!")
+
+
+def generate_metadata_single_dataset(dataset, split_name, output_folder, fire_sizes_dict):
+    """
+    Directly accesses dataset.samples to build the metadata catalog as a JSON.
+    Includes both the primary fire ID, a list of ALL fires in that tile, and their terminal sizes.
+    """
+    metadata_list = []
+    
+    print(f"Extracting metadata for {split_name} (Total: {len(dataset.samples)} samples)...")
+    
+    for idx, s in enumerate(dataset.samples):
+        
+        # Format the date nicely
+        year, month, day = s['fire_date']
+        date_str = f"{year}-{month:02d}-{day:02d}"
+        
+        # Extract ALL fire IDs involved in this tile (current day + next day)
+        curr_ids = [str(f['fire_id']) for f in s['curr_fires']]
+        next_ids = [str(f['fire_id']) for f in s['next_fires']]
+        all_fire_ids = sorted(list(set(curr_ids + next_ids)))
+        
+        # Look up the max size for each fire ID from the fast dictionary
+        # Defaulting to 0.0 if for some reason it's missing
+        all_fire_sizes = [float(fire_sizes_dict.get(fid, 0.0)) for fid in all_fire_ids]
+        primary_fire_id = str(s['primary_fire_id'])
+        
+        metadata_list.append({
+            "sample_index": idx,
+            "filename": f"sample_{idx}.npz",
+            "primary_fire_id": primary_fire_id,
+            "primary_fire_size": float(fire_sizes_dict.get(primary_fire_id, 0.0)),
+            "all_fire_ids": all_fire_ids,  
+            "all_fire_sizes": all_fire_sizes, # <--- Parallel list of max cumuareas
+            "year": int(s['year']),
+            "date": date_str,
+            "fireday": int(s['fireday']),
+            "center_lon": float(s['center_lon']),
+            "center_lat": float(s['center_lat']),
+            "tile_id": str(s['tile_id']),
+            "satellite_age_days": float(s['delta_t'])
+        })
+        
+    os.makedirs(output_folder, exist_ok=True)
+    
+    json_path = os.path.join(output_folder, f"simple_{split_name}_metadata.json")
+    with open(json_path, "w") as f:
+        json.dump(metadata_list, f, indent=4)
+        
+    print(f"Done! Saved JSON metadata to {json_path}")
+
+def generate_metadata_all_datasets(config: Config):
+
+    tc = config.training
+
+    dynamic_feats = DYNAMIC_FEATURES
+    static_feats = STATIC_FEATURES
+    target_years = TARGET_YEARS
+
+    # ---------------------------------------------------------
+    # LOAD MAPPERS & DATAFRAMES
+    # ---------------------------------------------------------
+    print('Loading Offline Tile Mappers...')
+    master_mapper = {}
+    for year in target_years:
+        mapper_path = os.path.join(settings.METADATA_FOLDER, f"tile_dob_mapper_{year}.json")
+        if os.path.exists(mapper_path):
+            with open(mapper_path, 'r') as f:
+                master_mapper.update(json.load(f))
+
+    print('Reading dataframes dynamically...')
+    columns_to_use = [col for col in settings.SUBSET_FEATURE_LIST if col not in ['easting', 'northing']]
+    dfs = [pd.read_csv(f'{settings.BASE_FOLDER}/Firegrowth_pts_v1_1_{year}/Firegrowth_pts_v1_1_{year}.csv', usecols=columns_to_use) 
+           for year in target_years if os.path.exists(f'{settings.BASE_FOLDER}/Firegrowth_pts_v1_1_{year}/Firegrowth_pts_v1_1_{year}.csv')]
+    
+    fire_growth_combined = pd.concat(dfs, ignore_index=True)
+    valid_ids = fire_growth_combined['ID'].unique()
+    print(len(valid_ids))
+
+
+    retained_ids = valid_ids
+    
+    fire_growth_filtered = fire_growth_combined[fire_growth_combined['ID'].astype(str).isin(retained_ids)]
+
+    print('lonlat_to_canada_lambert')
+    fire_growth_filtered, _ = lonlat_to_canada_lambert(fire_growth_filtered, 
+                                                       lon_col=settings.LON_COL, 
+                                                       lat_col=settings.LAT_COL)
+    print('\n')
+
+    print('append_tile_coordinates')
+    fire_growth_filtered = append_tile_coordinates(fire_growth_filtered, 
+                                                   grid_size=settings.GRID_SIZE, 
+                                                   pixel_size=settings.PIXEL_SIZE, 
+                                                   x_col=settings.X_COL, 
+                                                   y_col=settings.Y_COL)
+    print('\n')
+
+    print('assign_spatial_regions_by_fire_id')
+    fire_growth_filtered =  assign_spatial_regions_by_fire_id(fire_growth_filtered, 
+                                                              fire_id_col='ID', 
+                                                              n_regions=N_CLUSTERS)
+    print('\n')
+
+    print('analyze_cluster_stats')
+    cluster_summary = analyze_cluster_stats(fire_growth_filtered, holdout_year=2024)
+    print('\n')
+
+    print('select_stratified_test_clusters')
+    test_clusters = select_stratified_test_clusters(cluster_summary, 
+                                                    fire_growth_filtered, 
+                                                    holdout_year=int(HOLDOUT_YEAR), 
+                                                    fire_id_col='ID', 
+                                                    min_fires=10, 
+                                                    min_holdout_fires=30)
+    print('\n')
+
+    print('apply_spatial_buffer')
+    fire_growth_filtered = apply_spatial_buffer(fire_growth_filtered, test_clusters, fire_id_col='ID', buffer_tiles=2)
+    print('\n')
+
+    print('generate_experiment_splits')
+    splits_dict = generate_experiment_splits(fire_growth_filtered, 
+                                             holdout_year=int(HOLDOUT_YEAR), 
+                                             holdout_clusters=test_clusters)
+    print('\n')
+
+    train_ids = splits_dict['train_ids']
+    val_ids = splits_dict['val_ids']
+    test_space_ids = splits_dict['test_space_ids']
+    test_time_ids = splits_dict['test_time_ids']
+    test_spacetime_ids = splits_dict['test_spacetime_ids']
+
+    print("Pre-computing max fire sizes for metadata...")
+    # Group by ID, get the max cumuarea, and instantly turn it into a dict { '2024_188': 15000.5, ... }
+    fire_sizes_dict = fire_growth_filtered.groupby('ID')['cumuarea'].max().to_dict()
+    # Convert keys to strings to perfectly match the JSON formatting
+    fire_sizes_dict = {str(k): float(v) for k, v in fire_sizes_dict.items()}
+    # ------------------------------------
+
+    del dfs, fire_growth_combined, fire_growth_filtered
+    gc.collect()
+
+    is_sat_age = True
+    is_coords = True
+    is_fire_date = True
+
+    common_kwargs = {
+        'h5_dir': settings.H5_OUTPUT_FOLDER, 
+        'mapper': master_mapper,
+        'dynamic_features': dynamic_feats, 
+        'static_features': static_feats,
+        'fire_feature': "cumuarea", 
+        'patch_size': settings.GRID_SIZE,
+        'use_cumuarea': tc.use_cumuarea, 
+        'use_cumuarea_prev': tc.use_cumuarea_prev,
+        'normalize': False, 
+        'stats_dict': None, 
+        'sat_nodata': np.nan,
+        'use_cyclical_aspect': tc.use_cyclical_aspect, 
+        'return_sat_age': is_sat_age,
+        'remove_missing_data': REMOVE_MISSING_DATA,
+        'return_coords': is_coords,
+        'return_date': is_fire_date
+    }
+
+    # ---------------------------------------------------------
+    # INSTANTIATE DATASETS AND SAVE TO DISK
+    # ---------------------------------------------------------
+    train_dataset = H5FireSimpleDataset(id_list=train_ids, **common_kwargs)
+    print(f'Number of training samples {len(train_dataset)}')
+    print(f'Trains IDS : {len(get_retained_fire_ids(train_dataset))}')
+    generate_metadata_single_dataset(train_dataset, 'train', settings.METADATA_FOLDER, fire_sizes_dict)
+
+    val_dataset = H5FireSimpleDataset(id_list=val_ids, **common_kwargs)
+    print(f'Number of validation samples {len(val_dataset)}')
+    print(f'Val IDS : {len(get_retained_fire_ids(val_dataset))}')
+    generate_metadata_single_dataset(val_dataset, 'val', settings.METADATA_FOLDER, fire_sizes_dict)
+
+    test_space_dataset = H5FireSimpleDataset(id_list=test_space_ids, **common_kwargs)
+    print(f'Number of test space samples {len(test_space_dataset)}')
+    print(f'Test-Space IDS : {len(get_retained_fire_ids(test_space_dataset))}')
+    generate_metadata_single_dataset(test_space_dataset, 'test_space', settings.METADATA_FOLDER, fire_sizes_dict)
+
+    test_time_dataset = H5FireSimpleDataset(id_list=test_time_ids, **common_kwargs)
+    print(f'Number of test time samples {len(test_time_dataset)}')
+    print(f'Test-Time IDS : {len(get_retained_fire_ids(test_time_dataset))}')
+    generate_metadata_single_dataset(test_time_dataset, 'test_time', settings.METADATA_FOLDER, fire_sizes_dict)
+
+    test_spacetime_dataset = H5FireSimpleDataset(id_list=test_spacetime_ids, **common_kwargs)
+    print(f'Number of test spacetime samples {len(test_spacetime_dataset)}')
+    print(f'Test-Space-Time IDS : {len(get_retained_fire_ids(test_spacetime_dataset))}')
+    generate_metadata_single_dataset(test_spacetime_dataset, 'test_spacetime', settings.METADATA_FOLDER, fire_sizes_dict)
+
+def generate_raw_temporal_labels(dataset, output_base_folder, split_name):
+    """
+    Creates a SEPARATE folder containing the pure, single-day labels for temporal uncertainty,
+    PLUS a spatially dilated version of the standard target (Day T+1) for spatial uncertainty.
+    """
+    target_folder = os.path.join(output_base_folder, f"{split_name}_temporal_labels")
+    os.makedirs(target_folder, exist_ok=True)
+
+    print(f"\nGenerating labels (T, T+1, T+2, and Dilated T+1) for {split_name}...")
+
+    # Helper function to get ONLY the raw mask for ONE specific day
+    def get_single_day_raw_mask(tile_id, year, target_dob):
+        mask = torch.zeros((dataset.patch_size, dataset.patch_size), dtype=torch.bool)
+        day_key = f"{tile_id}_DOB_{year}_{target_dob}"
+        
+        # Get fires for this exact day
+        fires = dataset.mapper.get(day_key, [])
+        valid_fires = [f for f in fires if f['fire_id'] in dataset.id_list]
+
+        # Read only this day's array from H5
+        for f_dict in valid_fires:
+            f_fire = dataset._get_h5_handle(f_dict['fire_id'])
+            c_key = f_dict['day_key']
+            c_arr = f_fire[f"{tile_id}/days/{c_key}/features/{dataset.fire_feature}"][:]
+            mask |= (torch.from_numpy(c_arr) > 0)
+            
+        return mask.numpy().astype(np.uint8)
+
+    for idx, s in enumerate(tqdm(dataset.samples, desc=f"{split_name} uncertainty labels")):
+        tile_id = s['tile_id']
+        year = s['year']
+        dob = s['dob']
+
+        # 1. Day T (minus 1 day)
+        y_minus1 = get_single_day_raw_mask(tile_id, year, dob)
+        
+        # 2. Day T+1 (Standard Target)
+        y_standard = get_single_day_raw_mask(tile_id, year, dob + 1)
+        
+        # 3. Day T+2 (plus 1 day)
+        y_plus1 = get_single_day_raw_mask(tile_id, year, dob + 2)
+
+        # ---------------------------------------------------------
+        # 4. SPATIAL UNCERTAINTY: Dilate y_standard by 1 pixel
+        # ---------------------------------------------------------
+        # Convert to tensor, add batch/channel dims: (1, 1, H, W)
+        y_std_tensor = torch.from_numpy(y_standard).float().unsqueeze(0).unsqueeze(0)
+        
+        # A 3x3 max pool with stride 1 dilates the active pixels by exactly 1 pixel
+        y_dilated_tensor = F.max_pool2d(y_std_tensor, kernel_size=3, stride=1, padding=1)
+        
+        # Squeeze back to (H, W) and convert to uint8 numpy array
+        y_dilated = y_dilated_tensor.squeeze().numpy().astype(np.uint8)
+
+        # Save all FOUR in one separate file
+        file_path = os.path.join(target_folder, f"sample_{idx}.npz")
+        np.savez(
+            file_path, 
+            y_minus1=y_minus1,
+            y=y_standard,
+            y_plus1=y_plus1,
+            y_dilated=y_dilated
+        )
+
+def generate_labels_all_datasets(config: Config):
+
+    tc = config.training
+
+    dynamic_feats = DYNAMIC_FEATURES
+    static_feats = STATIC_FEATURES
+    target_years = TARGET_YEARS
+
+    # ---------------------------------------------------------
+    # LOAD MAPPERS & DATAFRAMES
+    # ---------------------------------------------------------
+    print('Loading Offline Tile Mappers...')
+    master_mapper = {}
+    for year in target_years:
+        mapper_path = os.path.join(settings.METADATA_FOLDER, f"tile_dob_mapper_{year}.json")
+        if os.path.exists(mapper_path):
+            with open(mapper_path, 'r') as f:
+                master_mapper.update(json.load(f))
+
+    print('Reading dataframes dynamically...')
+    columns_to_use = [col for col in settings.SUBSET_FEATURE_LIST if col not in ['easting', 'northing']]
+    dfs = [pd.read_csv(f'{settings.BASE_FOLDER}/Firegrowth_pts_v1_1_{year}/Firegrowth_pts_v1_1_{year}.csv', usecols=columns_to_use) 
+           for year in target_years if os.path.exists(f'{settings.BASE_FOLDER}/Firegrowth_pts_v1_1_{year}/Firegrowth_pts_v1_1_{year}.csv')]
+    
+    fire_growth_combined = pd.concat(dfs, ignore_index=True)
+    valid_ids = fire_growth_combined['ID'].unique()
+    print(len(valid_ids))
+
+
+    retained_ids = valid_ids
+    
+    fire_growth_filtered = fire_growth_combined[fire_growth_combined['ID'].astype(str).isin(retained_ids)]
+
+    print('lonlat_to_canada_lambert')
+    fire_growth_filtered, _ = lonlat_to_canada_lambert(fire_growth_filtered, 
+                                                       lon_col=settings.LON_COL, 
+                                                       lat_col=settings.LAT_COL)
+    print('\n')
+
+    print('append_tile_coordinates')
+    fire_growth_filtered = append_tile_coordinates(fire_growth_filtered, 
+                                                   grid_size=settings.GRID_SIZE, 
+                                                   pixel_size=settings.PIXEL_SIZE, 
+                                                   x_col=settings.X_COL, 
+                                                   y_col=settings.Y_COL)
+    print('\n')
+
+    print('assign_spatial_regions_by_fire_id')
+    fire_growth_filtered =  assign_spatial_regions_by_fire_id(fire_growth_filtered, 
+                                                              fire_id_col='ID', 
+                                                              n_regions=N_CLUSTERS)
+    print('\n')
+
+    print('analyze_cluster_stats')
+    cluster_summary = analyze_cluster_stats(fire_growth_filtered, holdout_year=2024)
+    print('\n')
+
+    print('select_stratified_test_clusters')
+    test_clusters = select_stratified_test_clusters(cluster_summary, 
+                                                    fire_growth_filtered, 
+                                                    holdout_year=int(HOLDOUT_YEAR), 
+                                                    fire_id_col='ID', 
+                                                    min_fires=10, 
+                                                    min_holdout_fires=30)
+    print('\n')
+
+    print('apply_spatial_buffer')
+    fire_growth_filtered = apply_spatial_buffer(fire_growth_filtered, test_clusters, fire_id_col='ID', buffer_tiles=2)
+    print('\n')
+
+    print('generate_experiment_splits')
+    splits_dict = generate_experiment_splits(fire_growth_filtered, 
+                                             holdout_year=int(HOLDOUT_YEAR), 
+                                             holdout_clusters=test_clusters)
+    print('\n')
+
+    train_ids = splits_dict['train_ids']
+    val_ids = splits_dict['val_ids']
+    test_space_ids = splits_dict['test_space_ids']
+    test_time_ids = splits_dict['test_time_ids']
+    test_spacetime_ids = splits_dict['test_spacetime_ids']
+
+    del dfs, fire_growth_combined, fire_growth_filtered
+    gc.collect()
+
+    is_sat_age = True
+    is_coords = True
+    is_fire_date = True
+
+    common_kwargs = {
+        'h5_dir': settings.H5_OUTPUT_FOLDER, 
+        'mapper': master_mapper,
+        'dynamic_features': dynamic_feats, 
+        'static_features': static_feats,
+        'fire_feature': "cumuarea", 
+        'patch_size': settings.GRID_SIZE,
+        'use_cumuarea': tc.use_cumuarea, 
+        'use_cumuarea_prev': tc.use_cumuarea_prev,
+        'normalize': False, 
+        'stats_dict': None, 
+        'sat_nodata': np.nan,
+        'use_cyclical_aspect': tc.use_cyclical_aspect, 
+        'return_sat_age': is_sat_age,
+        'remove_missing_data': REMOVE_MISSING_DATA,
+        'return_coords': is_coords,
+        'return_date': is_fire_date
+    }
+
+    print('Generating labels')
+
+    samples_folder = settings.SAMPLE_FOLDER
+    print(samples_folder)
+
+    # ---------------------------------------------------------
+    # INSTANTIATE DATASETS AND SAVE TO DISK
+    # ---------------------------------------------------------
+    train_dataset = H5FireSimpleDataset(id_list=train_ids, **common_kwargs)
+    print(f'Number of training samples {len(train_dataset)}')
+    print(f'Trains IDS : {len(get_retained_fire_ids(train_dataset))}')
+    generate_raw_temporal_labels(train_dataset, samples_folder, 'train')
+
+    val_dataset = H5FireSimpleDataset(id_list=val_ids, **common_kwargs)
+    print(f'Number of validation samples {len(val_dataset)}')
+    print(f'Val IDS : {len(get_retained_fire_ids(val_dataset))}')
+    generate_raw_temporal_labels(val_dataset, samples_folder, 'val')
+
+    test_space_dataset = H5FireSimpleDataset(id_list=test_space_ids, **common_kwargs)
+    print(f'Number of test space samples {len(test_space_dataset)}')
+    print(f'Test-Space IDS : {len(get_retained_fire_ids(test_space_dataset))}')
+    generate_raw_temporal_labels(test_space_dataset, samples_folder, 'test_space')
+
+    test_time_dataset = H5FireSimpleDataset(id_list=test_time_ids, **common_kwargs)
+    print(f'Number of test time samples {len(test_time_dataset)}')
+    print(f'Test-Time IDS : {len(get_retained_fire_ids(test_time_dataset))}')
+    generate_raw_temporal_labels(test_time_dataset, samples_folder, 'test_time')
+
+    test_spacetime_dataset = H5FireSimpleDataset(id_list=test_spacetime_ids, **common_kwargs)
+    print(f'Number of test spacetime samples {len(test_spacetime_dataset)}')
+    print(f'Test-Space-Time IDS : {len(get_retained_fire_ids(test_spacetime_dataset))}')
+    generate_raw_temporal_labels(test_spacetime_dataset, samples_folder, 'test_spacetime')

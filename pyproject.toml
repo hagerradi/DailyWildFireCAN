@@ -1,7 +1,7 @@
 [project]
-name = "CanadaWildFireDaily"
+name = "DailyWildfireCAN"
 version = "0.1.0"
-description = "AI for modelling wildfire daily propagation"
+description = "Dataset and benchmark for next-day wildfire spread prediction in Canada"
 readme = "README.md"
 requires-python = ">=3.10"
 dependencies = [

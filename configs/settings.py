@@ -17,15 +17,15 @@ OUTPUT_FOLDER = 'output_folder'
 
 H5_OUTPUT_FOLDER = f'{OUTPUT_FOLDER}/Fires_H5'
 
-# NORMAL SAMPLES (train, val, and test sets)
+# SAMPLES (train, val, test_easy, test_medium, test_hard), as released on Hugging Face
 SAMPLE_FOLDER = f'{OUTPUT_FOLDER}/Samples'
 TIMESERIES_SAMPLE_FOLDER = f'{OUTPUT_FOLDER}/Timeseries_Samples'
 
-# ADVANCED SAMPLES (train, val, and 3 test sets)
-SAMPLE_FOLDER_ADVANCED = f'{OUTPUT_FOLDER}/Samples_Advanced'
-TIMESERIES_SAMPLE_FOLDER_ADVANCED = f'{OUTPUT_FOLDER}/Timeseries_Samples_Advanced'
+# LEGACY SAMPLES (train, val, and a single test set), used only by legacy/
+LEGACY_SAMPLE_FOLDER = f'{OUTPUT_FOLDER}/Samples_Legacy'
+LEGACY_TIMESERIES_SAMPLE_FOLDER = f'{OUTPUT_FOLDER}/Timeseries_Samples_Legacy'
 
-# CLUSTERED SAMPLES (organized as clusters)
+# CLUSTERED SAMPLES (organized as clusters), used only by legacy/
 SAMPLE_FOLDER_CLUSTERS = f'{OUTPUT_FOLDER}/Samples_Clusters'
 TIMESERIES_SAMPLE_FOLDER_CLUSTERS = f'{OUTPUT_FOLDER}/Timeseries_Samples_Clusters'
 
@@ -66,10 +66,6 @@ DIRS_TO_CREATE = [
     H5_OUTPUT_FOLDER,
     SAMPLE_FOLDER,
     TIMESERIES_SAMPLE_FOLDER,
-    SAMPLE_FOLDER_CLUSTERS,
-    TIMESERIES_SAMPLE_FOLDER_CLUSTERS,
-    SAMPLE_FOLDER_ADVANCED,
-    TIMESERIES_SAMPLE_FOLDER_ADVANCED,
     METADATA_FOLDER,
     SATELLITE_STATUS_FOLDER,
     DEM_FOLDER,

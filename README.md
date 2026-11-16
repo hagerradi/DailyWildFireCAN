@@ -36,7 +36,7 @@ Edit `configs/settings.py` and set absolute paths for:
 
 ### Option 1 (recommended): pre-built samples
 
-Download `mono_temporal_samples/` or `multi_temporal_samples/` from the [dataset repository](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN) (the card lists sizes and download snippets) and extract each `.tar` into the sample folder from `configs/settings.py`: `SAMPLE_FOLDER` for mono-temporal, `TIMESERIES_SAMPLE_FOLDER` for multi-temporal (the `_ADVANCED` variants are used by the `*_advanced` scripts):
+Download `mono_temporal_samples/` or `multi_temporal_samples/` from the [dataset repository](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN) (the card lists sizes and download snippets) and extract each `.tar` into the sample folder from `configs/settings.py`: `SAMPLE_FOLDER` for mono-temporal, `TIMESERIES_SAMPLE_FOLDER` for multi-temporal:
 
 ```text
 Samples/
@@ -59,9 +59,10 @@ Download `raw_data/` from the dataset repository and place it as follows:
 | `metadata_fires_per_year/*.json` | `METADATA_FOLDER` |
 | `fire_growth_points_CFSDS/` (one `Firegrowth_pts_v1_1_<year>/` folder per year) | `BASE_FOLDER` |
 
-Then run from the project root:
+Then run from the project root (`metadata_generator_main` builds the per-sample metadata used by the analysis scripts in `src/evaluation/` and is optional):
 
 ```bash
+python -m samples_generation.metadata_generator_main --config configs/default.yaml --type simple   # optional
 python -m samples_generation.data_generator_main --config configs/default.yaml --type simple      # mono-temporal
 python -m samples_generation.data_generator_main --config configs/default.yaml --type timeseries  # multi-temporal
 ```
@@ -103,7 +104,7 @@ To switch between architectures (which will automatically configure the correspo
 1. **Spatiotemporal UNet** (`architecture: 'unet_convlstm'`): 
    A U-Net featuring a **ConvLSTM** bottleneck for recurrent time-series processing (e.g., 3-day sliding window forecasting).
 2. **UTAE** (`architecture: 'utae'`):
-   A temporal attention encoder-decoder baseline adapted from the ICCV 2021 U-TAE model for satellite image time series. This baseline uses the time-series offline samples from `Timeseries_Samples/`, and the generator now stores sequence positions for the temporal attention encoder when you regenerate those samples.
+   A temporal attention encoder-decoder baseline adapted from the ICCV 2021 U-TAE model for satellite image time series. It uses the multi-temporal samples and their sequence positions.
 3. **Simpler yet better video prediction (SimVPv2)** (`architecture: 'simvpv2_spatiotemporal'`): 
    Originally designed for video prediction, SimVPv2 (Tan et al., 2025) is utilized here as a purely convolutional baseline for spatio-temporal spread forecasting.
 4. **Video Swin-U-Net** (`architecture: 'video_swin_unet'`): 
@@ -144,10 +145,10 @@ python -m main --config configs/default.yaml
 ### Automatic Evaluation (Testing)
 At the end of the `train` loop, `main.py` automatically looks for the `best_checkpoint.pt` generated during training. 
 
-If found, it initiates the `test()` protocol on the holdout test split. This step computes the final metrics. Furthermore, it uploads high-resolution visual predictions (Previous Fire Mask, Ground Truth, Model Prediction) to CometML for your final visual analysis.
+If found, it runs the `test()` protocol on the three test splits (Test-Easy, Test-Medium and Test-Hard). This step computes the final metrics. Furthermore, it uploads high-resolution visual predictions (Previous Fire Mask, Ground Truth, Model Prediction) to CometML for your final visual analysis.
 
 ### Global Evaluation (Optional)
-You can run a global evaluation to test all your models at once. This script evaluates every model across its multiple runs and outputs a consolidated CSV file containing all the grouped metrics.
+You can run a global evaluation to test all your models at once. This script evaluates every model across its multiple runs on the three test splits and writes `evaluation_results.csv` with one row per model, run and split.
 
 Run the following command from your project root:
 ```bash
@@ -171,29 +172,45 @@ python -m src.evaluate --config configs/default.yaml
 > 
 > ```
 
+On a SLURM cluster, `scripts/parallel_script.sh` trains the three runs of one architecture as an array job (`python -m scripts.parallel_main --arch <architecture> --run_id <N>`) and saves them in this layout. `scripts/evaluate_script.sh` then runs the global evaluation.
+
 ### Logistic Regression Baseline
 
-This repository also includes an additive classical logistic-regression baseline. It is separate from the PyTorch trainer, reads the precomputed simple samples from `SAMPLE_FOLDER/{train,val,test}`, ignores `delta_t`, extracts a configurable spatial patch around each pixel, and trains `sklearn.linear_model.SGDClassifier(loss="log_loss")`.
+This repository also includes an additive classical logistic-regression baseline. It is separate from the PyTorch trainer, reads the mono-temporal samples from `SAMPLE_FOLDER/{train,val,test_easy,test_medium,test_hard}`, ignores `delta_t`, extracts a configurable spatial patch around each pixel, and trains `sklearn.linear_model.SGDClassifier(loss="log_loss")`.
 
-Following the approah in Next Day Wildfire Spread [Huot et al], the baseline performs search over the no-fire class-weight multiplier `W` configured in `training.w_values`. The number of SGD epochs is a fixed config input (`training.epochs`) and is not part of the hyperparameter search. The selected model is the one with the highest validation AUC-PR.
+Following the approach in Next Day Wildfire Spread [Huot et al], the baseline performs search over the no-fire class-weight multiplier `W` configured in `training.w_values`. The number of SGD epochs is a fixed config input (`training.epochs`) and is not part of the hyperparameter search. The selected model is the one with the highest validation AUC-PR.
 
 ```bash
-python -m logistic_regression_main --config configs/logistic_regression.yaml
+python -m scripts.logistic_regression_main --config configs/logistic_regression.yaml
 ```
 
 For a quick wiring check:
 
 ```bash
-python -m logistic_regression_main --config configs/logistic_regression_smoke.yaml
+python -m scripts.logistic_regression_main --config configs/logistic_regression_smoke.yaml
 ```
 
 On a SLURM cluster:
 
 ```bash
-sbatch slurm_logistic_regression.sbatch
+sbatch scripts/slurm_logistic_regression.sbatch
 ```
 
 Set `WILDFIRE_SAMPLE_FOLDER=/path/to/Samples` to avoid editing `configs/settings.py`, or set `data.sample_folder` directly in the logistic-regression config. Outputs include `w_sweep_metrics.csv/json`, `final_metrics.json`, `model.joblib`, `scaler.joblib`, and the feature manifest. Reported metrics include `auc_pr`, `average_precision` (AP), IoU, Dice/F1, precision, recall, and accuracy.
+
+## Repository structure
+
+```text
+├── main.py              # Train and test a model (python -m main --config configs/default.yaml)
+├── configs/             # settings.py (paths) and YAML training configs
+├── data_preparation/    # Build the raw per-fire .h5 files from the original sources
+├── samples_generation/  # Build train/val/test .npz samples from the raw data
+├── src/                 # Dataloaders, models, training, evaluation and baselines
+├── scripts/             # Parallel-training, logistic-regression and SLURM entry points
+├── notebooks/           # Walkthrough of the representative sample (downloaded from Hugging Face)
+├── legacy/              # Earlier experiments (single test split, cluster-based splits); not used for the paper
+└── figures/
+```
 
 ## License
 

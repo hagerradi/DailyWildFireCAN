@@ -12,8 +12,8 @@ from src.config import Config
 from configs import settings
 
 # Dataloaders
-from src.dataloader_advanced import get_advanced_dataloaders
-from src.dataloader_advanced_timeseries import get_advanced_timeseries_dataloaders
+from src.dataloader import get_dataloaders
+from src.dataloader_timeseries import get_timeseries_dataloaders
 
 # Models
 from src.models import unet
@@ -274,13 +274,13 @@ def run_generalization_analysis(config: Config) -> None:
     # LOAD DATALOADERS & INITIALIZE MODEL
     if mc.architecture == 'unet':
         print("Initializing Standard UNet...")
-        _, _, test_space_loader, test_time_loader, test_spacetime_loader = get_advanced_dataloaders(config, is_sat_age=False)
+        _, _, test_space_loader, test_time_loader, test_spacetime_loader = get_dataloaders(config, is_sat_age=False)
         model = unet.UNet(input_channels=mc.input_channels, num_classes=mc.num_classes, hidden_features=mc.hidden_features, use_skip_connections=mc.use_skip_connections, use_activation_after_upsampling=mc.use_activation_after_upsampling)
         meta_prefix = "simple"
     
     elif mc.architecture == 'unet_olmo_offline':
         print("Initializing OlmoEarth...")
-        _, _, test_space_loader, test_time_loader, test_spacetime_loader = get_advanced_dataloaders(config, 
+        _, _, test_space_loader, test_time_loader, test_spacetime_loader = get_dataloaders(config, 
                                                             is_sat_age=False,
                                                             is_coords=False,
                                                             is_loc_emb=False,
@@ -301,7 +301,7 @@ def run_generalization_analysis(config: Config) -> None:
         
         print("Initializing UTAE...")
        
-        _, _, test_space_loader, test_time_loader, test_spacetime_loader = get_advanced_timeseries_dataloaders(
+        _, _, test_space_loader, test_time_loader, test_spacetime_loader = get_timeseries_dataloaders(
             config,
             return_positions=True,
         )
