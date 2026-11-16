@@ -1,3 +1,15 @@
+"""Paths and constants shared by the data-preparation, sample-generation and training code.
+
+The three root folders can be set with environment variables instead of editing this file:
+
+* ``WILDFIRE_PROJECT_FOLDER``: metadata and satellite-status files.
+* ``WILDFIRE_DATA_FOLDER``: raw input data (CFSDS, ERA5, SCANFI, ...).
+* ``WILDFIRE_OUTPUT_FOLDER``: fire HDF5 cubes and generated samples.
+
+``WILDFIRE_SAMPLE_FOLDER`` and ``WILDFIRE_TIMESERIES_SAMPLE_FOLDER`` point directly to the
+mono- and multi-temporal samples (for example the extracted Hugging Face tarballs).
+"""
+import os
 from pathlib import Path
 
 GRID_SIZE = 256
@@ -11,15 +23,16 @@ SUBSET_FEATURE_LIST = ['ID', 'lon', 'lat', 'easting', 'northing', 'fireday', 'ye
                         'dem', 'slope', 'aspect', 'Biomass', 'Closure', 'prcB', 'prcC']
 
 # To be replaced with the absolute paths
-PROJECT_FOLDER = 'project_folder'
-DATA_FOLDER = 'data_folder'
-OUTPUT_FOLDER = 'output_folder'
+PROJECT_FOLDER = os.environ.get('WILDFIRE_PROJECT_FOLDER', 'project_folder')
+DATA_FOLDER = os.environ.get('WILDFIRE_DATA_FOLDER', 'data_folder')
+OUTPUT_FOLDER = os.environ.get('WILDFIRE_OUTPUT_FOLDER', 'output_folder')
 
 H5_OUTPUT_FOLDER = f'{OUTPUT_FOLDER}/Fires_H5'
 
 # SAMPLES (train, val, test_easy, test_medium, test_hard), as released on Hugging Face
-SAMPLE_FOLDER = f'{OUTPUT_FOLDER}/Samples'
-TIMESERIES_SAMPLE_FOLDER = f'{OUTPUT_FOLDER}/Timeseries_Samples'
+# (the test folders may also be named test_time, test_space, test_spacetime)
+SAMPLE_FOLDER = os.environ.get('WILDFIRE_SAMPLE_FOLDER', f'{OUTPUT_FOLDER}/Samples')
+TIMESERIES_SAMPLE_FOLDER = os.environ.get('WILDFIRE_TIMESERIES_SAMPLE_FOLDER', f'{OUTPUT_FOLDER}/Timeseries_Samples')
 
 # LEGACY SAMPLES (train, val, and a single test set), used only by legacy/
 LEGACY_SAMPLE_FOLDER = f'{OUTPUT_FOLDER}/Samples_Legacy'
@@ -58,9 +71,8 @@ SLOPE_FOLDER = f'{DATA_FOLDER}/DEM_API/Slope'
 ASPECT_FOLDER = f'{DATA_FOLDER}/DEM_API/Aspect'
 
 
-# ==========================================
-# AUTOMATIC DIRECTORY CREATION
-# ==========================================
+# Output folders created by ensure_dirs(), which is called when the data_preparation or
+# samples_generation packages are imported (training and evaluation do not create folders).
 DIRS_TO_CREATE = [
     OUTPUT_FOLDER,
     H5_OUTPUT_FOLDER,
@@ -72,8 +84,11 @@ DIRS_TO_CREATE = [
     ELEVATION_FOLDER,
     ELEVATION_AVG_FOLDER,
     SLOPE_FOLDER,
-    ASPECT_FOLDER
+    ASPECT_FOLDER,
 ]
 
-for d in DIRS_TO_CREATE:
-    Path(d).mkdir(parents=True, exist_ok=True)
+
+def ensure_dirs() -> None:
+    """Create the output folders listed in ``DIRS_TO_CREATE``."""
+    for d in DIRS_TO_CREATE:
+        Path(d).mkdir(parents=True, exist_ok=True)

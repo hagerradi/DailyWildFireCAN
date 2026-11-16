@@ -1,66 +1,49 @@
+"""Train and test one seed (``--run_id``) of an architecture; used by ``scripts/parallel_script.sh``.
+
+The seed is derived from ``config.seed`` and the run id, and checkpoints are written
+to ``checkpoints_<arch>_run<run_id>/``, the layout read by ``src.evaluate``.
+
+Example::
+
+    python -m scripts.parallel_main --config configs/default.yaml --arch unet --run_id 1
+"""
 import argparse
 from pathlib import Path
 
+from src.builder import canonical_architecture
 from src.config import Config
-from src.test import test
-from src.train import train
+from src.train import test, train
+
+
+def run_seed(base_seed: int, run_id: int) -> int:
+    """Seed used for run ``run_id`` (run 1 uses ``base_seed``)."""
+    return (run_id * (base_seed + (run_id - 1))) % (2**31 - 1)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Wildfire segmentation — entry point.")
-    parser.add_argument("--config", type=str, default="configs/default.yaml", help="Path to YAML config file.")
-    parser.add_argument("--run_id", type=int, default=1, help="Run ID (e.g., 1, 2, or 3)")
-    parser.add_argument("--arch", type=str, default=None, help="Override model architecture (e.g., unet)")
-
+    parser = argparse.ArgumentParser(description="Train and test one run of a DailyWildfireCAN model.")
+    parser.add_argument("--config", default="configs/default.yaml", help="YAML config file.")
+    parser.add_argument("--run_id", type=int, default=1, help="Run index (1, 2 or 3 in the paper).")
+    parser.add_argument("--arch", default=None, help="Override model.architecture.")
+    parser.add_argument("--checkpoint_root", default=".", help="Parent folder of the checkpoint folders.")
     args = parser.parse_args()
 
-    # Load configuration
     config = Config.from_yaml(args.config)
     if args.arch is not None:
-        config.model.architecture = args.arch
-
-    # Calculate dynamic seed reproducibly
-    fixed_seed = config.seed
-    config.seed = (args.run_id * (fixed_seed + (args.run_id - 1))) % (2**31 - 1)
-
-    # checkpoints_<arch>_run<id>, the layout expected by src/evaluate.py
-    checkpoint_dir = Path(f"checkpoints_{config.model.architecture}_run{args.run_id}")
-    checkpoint_dir.mkdir(parents=True, exist_ok=True)
-    
-    # Pass path to config as string for compatibility
-    config.training.checkpoint_dir = str(checkpoint_dir)
-
-    # Comet logging setup
+        config.model.architecture = canonical_architecture(args.arch)
+    base_seed = config.seed
+    config.seed = run_seed(base_seed, args.run_id)
+    config.training.checkpoint_dir = str(
+        Path(args.checkpoint_root) / f"checkpoints_{config.model.architecture}_run{args.run_id}"
+    )
     if config.comet.enabled:
         config.comet.experiment_name = f"{config.model.architecture}_run{args.run_id}"
 
-    print("\n--- [EXPERIMENT BATCH INIT] ---")
-    print(f"Architecture:   {config.model.architecture}")
-    print(f"Run ID:         {args.run_id}")
-    print(f"Base Seed:      {fixed_seed}")
-    print(f"Generated Seed: {config.seed}")
-    print(f"Output Path:    {checkpoint_dir}")
-    print("-------------------------------\n")
+    print(f"Architecture: {config.model.architecture} | run {args.run_id} | seed {config.seed} "
+          f"(base {base_seed}) | checkpoints: {config.training.checkpoint_dir}")
 
-    # Start Training
-    trainer, test_space_loader, test_time_loader, test_spacetime_loader = train(config)
-
-    # Run Testing
-    best_checkpoint = checkpoint_dir / "best_checkpoint.pt"
-
-    if best_checkpoint.exists():
-        print(f"\n--- Starting Final Test Evaluation with {best_checkpoint} ---")
-        
-        print("\n[TEST-SPACE]")
-        test(trainer, best_checkpoint, test_space_loader, generate_image=False)
-
-        print("\n[TEST-TIME]")
-        test(trainer, best_checkpoint, test_time_loader, generate_image=False)
-
-        print("\n[TEST-SPACETIME]")
-        test(trainer, best_checkpoint, test_spacetime_loader, generate_image=True)
-    else:
-        print(f"WARNING: Best checkpoint not found at {best_checkpoint}")
+    trainer, loaders = train(config)
+    test(trainer, loaders)
 
 
 if __name__ == "__main__":

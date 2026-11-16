@@ -13,13 +13,12 @@ import json
 from datetime import datetime
 from collections import OrderedDict
 
-from src.config import Config
 from samples_generation.data_generator_helper import calculate_h5_statistics
 from samples_generation.data_generator_utils import lonlat_to_canada_lambert, append_tile_coordinates, assign_spatial_regions_by_fire_id, select_stratified_test_clusters, analyze_cluster_stats, apply_spatial_buffer, generate_experiment_splits
 
 from configs import settings
 
-from samples_generation.samples_configs.samples_settings import DYNAMIC_FEATURES, STATIC_FEATURES, TARGET_YEARS, RANDOM_SEED, REMOVE_MISSING_DATA, HOLDOUT_YEAR, N_CLUSTERS
+from samples_generation.samples_configs.samples_settings import DYNAMIC_FEATURES, STATIC_FEATURES, USE_CUMUAREA, USE_CUMUAREA_PREV, USE_CYCLICAL_ASPECT, TARGET_YEARS, RANDOM_SEED, REMOVE_MISSING_DATA, HOLDOUT_YEAR, N_CLUSTERS
 
 class H5FireSimpleDataset(Dataset):
     
@@ -418,6 +417,13 @@ class H5FireSimpleDataset(Dataset):
                     continue
                 # ---------------------------------------
                 
+                # --- NBAC WILDFIRE HISTORY (binary: NBAC class 1 = wildfire) ---
+                elif feature == 'annual_disturbance_nbac':
+                    arr_patch = static_group[feature][:]
+                    x_tensor[channel_idx] = torch.from_numpy((arr_patch == 1).astype(np.float32))
+                    channel_idx += 1
+                    continue
+
                 # --- ANNUAL DISTURBANCE ONE-HOT ENCODING ---
                 elif feature == 'annual_disturbance':
                     arr_patch = static_group[feature][:].astype(np.int64)
@@ -625,14 +631,13 @@ def get_retained_fire_ids(dataset):
     retained_ids = sorted(list(retained_ids))
     return retained_ids
 
-def generate_simple_offline_data(config: Config) -> None:
-    """
+def generate_simple_offline_data() -> None:
+    """Build the mono-temporal train/val/test samples from the fire cubes (``settings.H5_OUTPUT_FOLDER``).
 
-    Args:
-      config: Config: the config parameters
+    Computes the training statistics, splits the fires (Section 3.4 of the paper) and writes
+    ``sample_<idx>.npz`` files to ``settings.SAMPLE_FOLDER/<split>``.
     """
     
-    tc = config.training
 
     is_sat_age = True
     is_coords = True
@@ -733,8 +738,8 @@ def generate_simple_offline_data(config: Config) -> None:
             static_features=static_feats,
             fire_feature="cumuarea", 
             patch_size=settings.GRID_SIZE,
-            use_cumuarea=tc.use_cumuarea, 
-            use_cumuarea_prev=tc.use_cumuarea_prev,
+            use_cumuarea=USE_CUMUAREA, 
+            use_cumuarea_prev=USE_CUMUAREA_PREV,
             normalize=False, 
             stats_dict=None, 
             sat_nodata=np.nan,
@@ -753,13 +758,9 @@ def generate_simple_offline_data(config: Config) -> None:
         master_mapper,
         # train_ids,
         pretrain_ids,
-        stats_filename="simple_dataset_stats_8_years_reb_v1.json",
+        stats_filename=os.path.join(settings.SAMPLE_FOLDER, "training_stats_mono_temporal_samples.json"),
         remove_missing_data=REMOVE_MISSING_DATA
     )
-    # stats_filepath = "simple_dataset_stats_8_years_reb_v1.json"
-    # print(f"Loading statistics directly from {stats_filepath}...")
-    # with open(stats_filepath, "r") as f:
-    #     stats_dict = json.load(f)
 
     common_kwargs = {
         'h5_dir': settings.H5_OUTPUT_FOLDER, 
@@ -768,12 +769,12 @@ def generate_simple_offline_data(config: Config) -> None:
         'static_features': static_feats,
         'fire_feature': "cumuarea", 
         'patch_size': settings.GRID_SIZE,
-        'use_cumuarea': tc.use_cumuarea, 
-        'use_cumuarea_prev': tc.use_cumuarea_prev,
+        'use_cumuarea': USE_CUMUAREA, 
+        'use_cumuarea_prev': USE_CUMUAREA_PREV,
         'normalize': True, 
         'stats_dict': stats_dict, 
         'sat_nodata': np.nan,
-        'use_cyclical_aspect': tc.use_cyclical_aspect, 
+        'use_cyclical_aspect': USE_CYCLICAL_ASPECT, 
         'return_sat_age': is_sat_age,
         'remove_missing_data': REMOVE_MISSING_DATA,
         'return_coords': is_coords,
@@ -887,9 +888,8 @@ def generate_metadata_single_dataset(dataset, split_name, output_folder, fire_si
         
     print(f"Done! Saved JSON metadata to {json_path}")
 
-def generate_metadata_all_datasets(config: Config):
+def generate_metadata_all_datasets():
 
-    tc = config.training
 
     dynamic_feats = DYNAMIC_FEATURES
     static_feats = STATIC_FEATURES
@@ -990,12 +990,12 @@ def generate_metadata_all_datasets(config: Config):
         'static_features': static_feats,
         'fire_feature': "cumuarea", 
         'patch_size': settings.GRID_SIZE,
-        'use_cumuarea': tc.use_cumuarea, 
-        'use_cumuarea_prev': tc.use_cumuarea_prev,
+        'use_cumuarea': USE_CUMUAREA, 
+        'use_cumuarea_prev': USE_CUMUAREA_PREV,
         'normalize': False, 
         'stats_dict': None, 
         'sat_nodata': np.nan,
-        'use_cyclical_aspect': tc.use_cyclical_aspect, 
+        'use_cyclical_aspect': USE_CYCLICAL_ASPECT, 
         'return_sat_age': is_sat_age,
         'remove_missing_data': REMOVE_MISSING_DATA,
         'return_coords': is_coords,
@@ -1094,9 +1094,8 @@ def generate_raw_temporal_labels(dataset, output_base_folder, split_name):
             y_dilated=y_dilated
         )
 
-def generate_labels_all_datasets(config: Config):
+def generate_labels_all_datasets():
 
-    tc = config.training
 
     dynamic_feats = DYNAMIC_FEATURES
     static_feats = STATIC_FEATURES
@@ -1190,12 +1189,12 @@ def generate_labels_all_datasets(config: Config):
         'static_features': static_feats,
         'fire_feature': "cumuarea", 
         'patch_size': settings.GRID_SIZE,
-        'use_cumuarea': tc.use_cumuarea, 
-        'use_cumuarea_prev': tc.use_cumuarea_prev,
+        'use_cumuarea': USE_CUMUAREA, 
+        'use_cumuarea_prev': USE_CUMUAREA_PREV,
         'normalize': False, 
         'stats_dict': None, 
         'sat_nodata': np.nan,
-        'use_cyclical_aspect': tc.use_cyclical_aspect, 
+        'use_cyclical_aspect': USE_CYCLICAL_ASPECT, 
         'return_sat_age': is_sat_age,
         'remove_missing_data': REMOVE_MISSING_DATA,
         'return_coords': is_coords,

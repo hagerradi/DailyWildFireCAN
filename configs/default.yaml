@@ -1,3 +1,5 @@
+# Hyper-parameters used for every model in the paper (Appendix B).
+# The architecture can be overridden on the command line with --arch.
 seed: 42
 
 dataset:
@@ -7,36 +9,29 @@ dataset:
   num_classes: 1
 
 model:
+  # unet, unet_time_gap, unet_attention, unet_segformer, asufm, umamba, unet_olmo_offline,
+  # dual_dinov3 (mono-temporal) | unet_convlstm, utae, simvpv2_spatiotemporal,
+  # video_swin_unet, frp (multi-temporal)
+  architecture: "unet"
   input_channels: 50
   num_classes: 1
   hidden_features: [64, 128, 256, 512]
   use_skip_connections: true
   use_activation_after_upsampling: false
-  architecture: "unet"
 
 training:
   batch_size: 16
   num_epochs: 20
   learning_rate: 0.001
   weight_decay: 0.0001
-  train_split: 0.7
-  val_split: 0.15
-  test_split: 0.15
   num_workers: 4
-  device: "auto"
-  checkpoint_dir: "checkpoints"
+  device: "auto"          # auto, cuda, mps or cpu
+  checkpoint_dir: "checkpoints_unet"
   log_interval: 10
-  use_cumuarea: false
-  use_cumuarea_prev: true
-  downscale: false
-  downscale_factor: 2
-  smooth_mask: false
-  smooth_kernel: 3
-  use_cyclical_aspect: true
 
 comet:
-  enabled: true
+  enabled: false          # set to true and export COMET_API_KEY to log to Comet
   project_name: ""
   workspace: ""
   experiment_name: "unet"
-  experiment_tags: ["unet-baseline", "50-channels", "1-class"]
+  experiment_tags: []

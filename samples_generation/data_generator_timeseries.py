@@ -12,7 +12,6 @@ import json
 from collections import OrderedDict
 from datetime import datetime
 
-from src.config import Config
 from samples_generation.data_generator_helper import calculate_h5_statistics
 from samples_generation.data_generator_utils import (lonlat_to_canada_lambert, 
                                                      append_tile_coordinates, 
@@ -24,7 +23,8 @@ from samples_generation.data_generator_utils import (lonlat_to_canada_lambert,
 
 from configs import settings
 
-from samples_generation.samples_configs.samples_settings import (DYNAMIC_FEATURES, STATIC_FEATURES, 
+from samples_generation.samples_configs.samples_settings import (DYNAMIC_FEATURES, STATIC_FEATURES,
+                                                                 USE_CUMUAREA, USE_CUMUAREA_PREV, USE_CYCLICAL_ASPECT,
                                                                  TARGET_YEARS, 
                                                                  REMOVE_MISSING_DATA,
                                                                  HOLDOUT_YEAR, N_CLUSTERS)
@@ -413,6 +413,13 @@ class H5FireTimeSeriesDataset(Dataset):
                         channel_idx += 15
                         continue
                         
+                    # --- NBAC WILDFIRE HISTORY (binary: NBAC class 1 = wildfire) ---
+                    elif feature == 'annual_disturbance_nbac':
+                        arr_patch = static_group[feature][:]
+                        x_tensor[t_idx, channel_idx] = torch.from_numpy((arr_patch == 1).astype(np.float32))
+                        channel_idx += 1
+                        continue
+
                     # --- ANNUAL DISTURBANCE ONE-HOT ENCODING ---
                     elif feature == 'annual_disturbance':
                         arr_patch = static_group[feature][:].astype(np.int64)
@@ -615,16 +622,14 @@ def get_retained_fire_ids(dataset):
             retained_ids.add(f_dict['fire_id'])
     return sorted(list(retained_ids))
 
-def generate_timeseries_offline_data(config: Config, seq_length: int) -> None:
+def generate_timeseries_offline_data(seq_length: int) -> None:
     """
     End-to-end process to generate the samples
 
     Args:
-      config: Config: the config params
       seq_length: int: the length of the time series
     """
     
-    tc = config.training
     is_sat_age = True
     is_coords = True
     is_fire_date = True
@@ -717,12 +722,12 @@ def generate_timeseries_offline_data(config: Config, seq_length: int) -> None:
         fire_feature="cumuarea", 
         patch_size=settings.GRID_SIZE,
         seq_length=seq_length,
-        use_cumuarea=tc.use_cumuarea, 
-        use_cumuarea_prev=tc.use_cumuarea_prev,
+        use_cumuarea=USE_CUMUAREA, 
+        use_cumuarea_prev=USE_CUMUAREA_PREV,
         normalize=False, 
         stats_dict=None, 
         sat_nodata=np.nan,
-        use_cyclical_aspect=tc.use_cyclical_aspect,
+        use_cyclical_aspect=USE_CYCLICAL_ASPECT,
         remove_missing_data=REMOVE_MISSING_DATA,
         return_coords=is_coords,
         return_date=is_fire_date
@@ -735,13 +740,9 @@ def generate_timeseries_offline_data(config: Config, seq_length: int) -> None:
         settings.H5_OUTPUT_FOLDER, 
         master_mapper,
         pretrain_ids,
-        stats_filename="timeseries_dataset_stats_8_years_reb_v1.json",
+        stats_filename=os.path.join(settings.TIMESERIES_SAMPLE_FOLDER, "training_stats_multi_temporal_samples.json"),
         remove_missing_data=REMOVE_MISSING_DATA
     )
-    # stats_filepath = "timeseries_dataset_stats_8_years_reb_v1.json"
-    # print(f"Loading statistics directly from {stats_filepath}...")
-    # with open(stats_filepath, "r") as f:
-    #     stats_dict = json.load(f)
 
     common_kwargs = {
         'h5_dir': settings.H5_OUTPUT_FOLDER, 
@@ -751,12 +752,12 @@ def generate_timeseries_offline_data(config: Config, seq_length: int) -> None:
         'fire_feature': "cumuarea", 
         'patch_size': settings.GRID_SIZE,
         'seq_length': seq_length,
-        'use_cumuarea': tc.use_cumuarea, 
-        'use_cumuarea_prev': tc.use_cumuarea_prev,
+        'use_cumuarea': USE_CUMUAREA, 
+        'use_cumuarea_prev': USE_CUMUAREA_PREV,
         'normalize': True, 
         'stats_dict': stats_dict, 
         'sat_nodata': np.nan,
-        'use_cyclical_aspect': tc.use_cyclical_aspect, 
+        'use_cyclical_aspect': USE_CYCLICAL_ASPECT, 
         'return_sat_age': is_sat_age,
         'remove_missing_data': REMOVE_MISSING_DATA,
         'return_coords': is_coords,
@@ -888,12 +889,11 @@ def generate_timeseries_metadata_single_dataset(dataset, split_name, output_fold
         
     print(f"Done! Saved JSON metadata to {json_path}")
 
-def generate_timeseries_metadata_all_datasets(config: Config, seq_length: int) -> None:
+def generate_timeseries_metadata_all_datasets(seq_length: int) -> None:
     """
     End-to-end process to generate metadata for time series samples
     """
     
-    tc = config.training
 
     dynamic_feats = DYNAMIC_FEATURES
     static_feats = STATIC_FEATURES
@@ -996,12 +996,12 @@ def generate_timeseries_metadata_all_datasets(config: Config, seq_length: int) -
         'fire_feature': "cumuarea", 
         'patch_size': settings.GRID_SIZE,
         'seq_length': seq_length, 
-        'use_cumuarea': tc.use_cumuarea, 
-        'use_cumuarea_prev': tc.use_cumuarea_prev,
+        'use_cumuarea': USE_CUMUAREA, 
+        'use_cumuarea_prev': USE_CUMUAREA_PREV,
         'normalize': False, 
         'stats_dict': None, 
         'sat_nodata': np.nan,
-        'use_cyclical_aspect': tc.use_cyclical_aspect, 
+        'use_cyclical_aspect': USE_CYCLICAL_ASPECT, 
         'return_sat_age': is_sat_age,
         'remove_missing_data': REMOVE_MISSING_DATA,
         'return_coords': is_coords,

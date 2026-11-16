@@ -19,145 +19,155 @@ This repository contains the code to **build the dataset** (`data_preparation/`,
 
 ## Setup
 
+Python 3.10. With [uv](https://docs.astral.sh/uv/) (versions pinned in `uv.lock`):
+
 ```bash
 git clone https://github.com/hagerradi/DailyWildFireCAN && cd DailyWildFireCAN
-uv sync                                     # or: python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt
+uv sync && source .venv/bin/activate
 ```
 
-Some models need extra packages or access:
+or with pip: `python -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt`.
 
-| Model | Requirement |
-|---|---|
-| U-Mamba | `pip install mamba-ssm` (CUDA only) |
-| OlmoEarth | `pip install olmoearth-pretrain`, then precompute the embeddings with `python -m samples_generation.data_appender_olmo` |
-| DINOv3 | Accept the license of [`facebook/dinov3-vitl16-pretrain-sat493m`](https://huggingface.co/facebook/dinov3-vitl16-pretrain-sat493m) and run `hf auth login` |
+Optional, model-specific packages:
 
-Edit `configs/settings.py` and set absolute paths for:
+* U-Mamba: `pip install mamba-ssm` (CUDA only).
+* OlmoEarth: `pip install olmoearth-pretrain` (only to compute the embeddings, see below).
+* DINOv3: accept the license of [`facebook/dinov3-vitl16-pretrain-sat493m`](https://huggingface.co/facebook/dinov3-vitl16-pretrain-sat493m) and run `hf auth login`.
 
-* `PROJECT_FOLDER`: this repository.
-* `DATA_FOLDER`: raw downloaded sources (see [`data_preparation/README.md`](data_preparation/README.md)).
-* `OUTPUT_FOLDER`: generated data. Its subfolders are created automatically the first time any script runs.
+All paths are defined in [`configs/settings.py`](configs/settings.py) and can be overridden with environment variables:
+
+| Variable | Default | Content |
+|---|---|---|
+| `WILDFIRE_SAMPLE_FOLDER` | `<OUTPUT_FOLDER>/Samples` | Mono-temporal samples |
+| `WILDFIRE_TIMESERIES_SAMPLE_FOLDER` | `<OUTPUT_FOLDER>/Timeseries_Samples` | Multi-temporal samples |
+| `WILDFIRE_OUTPUT_FOLDER` | `output_folder` | Generated data (fire cubes, metadata, samples) |
+| `WILDFIRE_DATA_FOLDER` | `data_folder` | Raw sources (only to rebuild the fire cubes) |
 
 All commands below are run from the project root.
 
 ## 📂 Data
 
-### Option 1 (recommended): pre-built samples
+### Pre-built samples (recommended)
 
-Download `mono_temporal_samples/` or `multi_temporal_samples/` from the [dataset repository](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN) (the card lists sizes and download snippets) and extract each `.tar` into the sample folder from `configs/settings.py`: `SAMPLE_FOLDER` for mono-temporal, `TIMESERIES_SAMPLE_FOLDER` for multi-temporal:
-
-```text
-Samples/
-├── train/
-├── val/
-├── test_easy/     # or test_time/
-├── test_medium/   # or test_space/
-└── test_hard/     # or test_spacetime/
-```
-
-The archives extract the test splits as `test_time`, `test_space` and `test_spacetime`; the code accepts both these names and the paper names. The normalization statistics (`training_stats_*.json`) are in the same repository.
-
-### Option 2: generate samples from the raw data
-
-Download `raw_data/` from the dataset repository and place it as follows:
-
-| Raw data | Destination (`configs/settings.py`) |
-|---|---|
-| `fire_data/*.h5` | `H5_OUTPUT_FOLDER` |
-| `metadata_fires_per_year/*.json` | `METADATA_FOLDER` |
-| `fire_growth_points_CFSDS/` (one `Firegrowth_pts_v1_1_<year>/` folder per year) | `BASE_FOLDER` |
-
-Then run:
+Download the mono-temporal (`mono_temporal_samples/`, ~150 GB) and/or multi-temporal (`multi_temporal_samples/`, ~360 GB) samples from the [dataset repository](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN) and extract them:
 
 ```bash
-python -m samples_generation.data_generator_main --config configs/default.yaml --type simple      # mono-temporal
-python -m samples_generation.data_generator_main --config configs/default.yaml --type timeseries  # multi-temporal
-python -m samples_generation.metadata_generator_main --config configs/default.yaml --type simple  # per-sample metadata, needed only for the analyses
+hf download DailyWildfireCAN/DailyWildfireCAN --repo-type dataset \
+    --include "mono_temporal_samples/*" --local-dir hf_data
+mkdir -p Samples && for t in hf_data/mono_temporal_samples/*.tar; do tar -xf "$t" -C Samples; done
+export WILDFIRE_SAMPLE_FOLDER=$PWD/Samples   # WILDFIRE_TIMESERIES_SAMPLE_FOLDER for multi-temporal samples
 ```
 
-Feature selection, target years and sequence length (default 3) are set in `samples_generation/samples_configs/samples_settings.py`. The splitting logic, spatial-leakage guarantees and `.npz` keys are described on the dataset card. Normalization statistics are computed on the training split only and saved as a `.json` next to the samples.
+Use `--include "mono_temporal_samples/test_hard.tar"` to start with Test-Hard only (2.6 GB). The test archives extract to `test_time/` (Test-Easy), `test_space/` (Test-Medium) and `test_spacetime/` (Test-Hard); the code accepts both these names and `test_easy/`, `test_medium/`, `test_hard/`. The sample format and the 50 input channels are documented on the dataset card and in [`src/features.py`](src/features.py).
 
-To rebuild the raw `.h5` files from the original sources (ERA5-Land, SCANFI, ASTER, Sentinel-2, etc.), see [`data_preparation/README.md`](data_preparation/README.md).
+### Generating the samples from the fire cubes
+
+Download `raw_data/` from the dataset repository and place `fire_data/*.h5` in `H5_OUTPUT_FOLDER`, `metadata_fires_per_year/*.json` in `METADATA_FOLDER` and `fire_growth_points_CFSDS/` in `BASE_FOLDER` (see `configs/settings.py`). Then:
+
+```bash
+python -m samples_generation.data_generator_main --type simple       # mono-temporal  -> SAMPLE_FOLDER
+python -m samples_generation.data_generator_main --type timeseries   # multi-temporal -> TIMESERIES_SAMPLE_FOLDER
+```
+
+Features, years and sequence length are set in `samples_generation/samples_configs/samples_settings.py`. The training statistics (`training_stats_*.json`) are written next to the samples. To rebuild the fire cubes from the original sources (ERA5-Land, SCANFI, Sentinel-2, ...), see [`data_preparation/README.md`](data_preparation/README.md).
+
+The analyses of Section 5 need extra files that are not part of the release; they are generated from the fire cubes:
+
+```bash
+python -m samples_generation.metadata_generator_main --type simple            # per-sample metadata (generalization analysis)
+python -m samples_generation.metadata_generator_main --type simple --labels   # relaxed labels (label-variation analysis)
+python -m samples_generation.data_appender_olmo --folder $WILDFIRE_SAMPLE_FOLDER   # OlmoEarth embeddings (olmo_emb)
+```
 
 ## 🤖 Models
 
-Set `model.architecture` in [`configs/default.yaml`](configs/default.yaml) to choose a model; the matching data loader (mono- or multi-temporal) is selected automatically. Released checkpoints and results are on the [benchmark card](https://huggingface.co/DailyWildfireCAN/DailyWildfireCAN-Benchmark), whose folder names differ from the `architecture` values:
+| Model (paper) | `--arch` | Checkpoint folder on Hugging Face | Samples |
+|---|---|---|---|
+| U-Net | `unet` | `unet` | mono |
+| U-Net with time-gap encoding | `unet_time_gap` | `unet_with_time_gap` | mono |
+| Attention U-Net | `unet_attention` | `attention_unet` | mono |
+| SegFormer U-Net | `unet_segformer` | `segformer_unet` | mono |
+| Swin-U-Net | `asufm` | `swin_unet` | mono |
+| U-Mamba | `umamba` | – | mono |
+| OlmoEarth | `unet_olmo_offline` | `olmoearth` | mono + `olmo_emb` |
+| DINOv3 | `dual_dinov3` | `dinov3` | mono |
+| U-Net with ConvLSTM | `unet_convlstm` | `unet_with_convlstm` | multi |
+| U-TAE | `utae` | `utae` | multi |
+| SimVPv2 | `simvpv2_spatiotemporal` | `simvpv2` | multi |
+| Video Swin-U-Net | `video_swin_unet` | `video_swin_unet` | multi |
+| Multi-modal (FRP) | `frp` | `multi_mode_model` | multi |
 
-| Model (paper) | `architecture` | Benchmark folder |
-|---|---|---|
-| **Mono-temporal** | | |
-| U-Net | `unet` | `unet` |
-| U-Net + Time-Gap Encoding | `unet_time_gap` | `unet_with_time_gap` |
-| Attention U-Net | `unet_attention` | `attention_unet` |
-| SegFormer U-Net | `unet_segformer` | `segformer_unet` |
-| Swin-U-Net | `asufm` | `swin_unet` |
-| U-Mamba | `umamba` | – |
-| OlmoEarth | `unet_olmo_offline` | `olmoearth` |
-| DINOv3 | `dual_dinov3` | `dinov3` |
-| **Multi-temporal** | | |
-| U-Net ConvLSTM | `unet_convlstm` | `unet_with_convlstm` |
-| U-TAE | `utae` | `utae` |
-| SimVPv2 | `simvpv2_spatiotemporal` | `simvpv2` |
-| Video Swin-U-Net | `video_swin_unet` | `video_swin_unet` |
-| Multi-Model | `frp` | `multi_mode_model` |
+Every command that takes an architecture accepts both the `--arch` name and the Hugging Face folder name. The implementations are in `src/models/` and are instantiated by `src/builder.py`; the references are listed in the paper.
 
-Model descriptions and references are in Section 4 of the [paper](https://arxiv.org/abs/2611.14207).
+### Training
 
-## 🏋️ Training
+[`configs/default.yaml`](configs/default.yaml) holds the hyper-parameters of the paper (Appendix B): AdamW (lr 1e-3, weight decay 1e-4), batch size 16, 20 epochs, one warm-up epoch followed by a cosine schedule, and a 0.5/0.5 Focal (α = 0.85, γ = 2) + Dice loss.
 
 ```bash
-python -m main --config configs/default.yaml
+python main.py --arch unet_time_gap
 ```
 
-trains on `train`, keeps the checkpoint with the lowest validation loss as `best_checkpoint.pt` in `training.checkpoint_dir`, then evaluates it on Test-Easy, Test-Medium and Test-Hard (AUC-PR, precision, recall). `configs/utae.yaml` is the same configuration with `architecture: utae`.
+trains on `train`, keeps the checkpoint with the lowest validation loss (`checkpoints_<arch>/best_checkpoint.pt`) and evaluates it on the three test splits. Training resumes automatically from `latest_checkpoint.pt` if present. Set `comet.enabled: true` and `COMET_API_KEY` to log to [Comet](https://www.comet.com).
 
-`configs/default.yaml` holds the hyper-parameters of the paper (Appendix B): AdamW (learning rate 1e-3, weight decay 1e-4), batch size 16, 20 epochs, a one-epoch linear warm-up followed by cosine decay, and a 0.5 Focal (α = 0.85, γ = 2) + 0.5 Dice loss.
-
-Logging to [Comet](https://www.comet.com) is on by default (`comet.enabled`): export `COMET_API_KEY` and set `comet.project_name` and `comet.workspace`, or set `comet.enabled: false`.
-
-The paper reports the mean and standard deviation over three runs. `scripts.parallel_main` trains one run and saves it in `checkpoints_<architecture>_run<N>/`:
+The paper reports the mean and standard deviation over three seeds. `scripts.parallel_main` trains one seed and writes `checkpoints_<arch>_run<N>/`:
 
 ```bash
 for run in 1 2 3; do python -m scripts.parallel_main --arch utae --run_id $run; done
-sbatch scripts/parallel_script.sh   # the same three runs as a SLURM array job (set --arch in the script)
+sbatch scripts/parallel_script.sh utae      # same on SLURM (array job)
 ```
 
-## 📊 Evaluation
+### Evaluation
+
+`src.evaluate` evaluates every run of every architecture on the test splits and writes one CSV row per architecture, run and split (AUC-PR, average precision, F1, IoU, precision, recall at 0.5). To reproduce the benchmark with the released checkpoints:
 
 ```bash
-python -m src.evaluate --config configs/default.yaml
+hf download DailyWildfireCAN/DailyWildfireCAN-Benchmark --local-dir .   # -> benchmark_models_checkpoints/
+python -m src.evaluate --checkpoint_dir benchmark_models_checkpoints \
+    --architectures unet unet_with_time_gap utae --splits test_hard --output results.csv
 ```
 
-evaluates the three runs of each architecture listed in `architectures` in [`src/evaluate.py`](src/evaluate.py) (by default `unet`, `unet_attention`, `unet_time_gap`, `unet_convlstm`, `unet_segformer` and `utae`) on the three test splits and writes `evaluation_results.csv` (one row per architecture, run and split). Checkpoints must be at `checkpoints_<architecture>_run<N>/best_checkpoint.pt` (`run_<N>` also works). To evaluate the released checkpoints, download them and rename each `<benchmark folder>/checkpoints_<benchmark folder>_run_<N>/` to `checkpoints_<architecture>_run_<N>/` using the table above:
+It finds both `checkpoints_<arch>_run<N>/` (written by `scripts.parallel_main`) and the released `<name>/checkpoints_<name>_run_<N>/`.
+
+The heuristic baselines (persistence, dilation and cellular automata) are evaluated on the mono-temporal samples with:
 
 ```bash
-hf download DailyWildfireCAN/DailyWildfireCAN-Benchmark --local-dir .
-mv benchmark_models_checkpoints/unet_with_time_gap/checkpoints_unet_with_time_gap_run_1 checkpoints_unet_time_gap_run_1
+python -m src.baselines.evaluate --stats hf_data/mono_temporal_samples/training_stats_mono_temporal_samples.json
 ```
 
-`scripts/evaluate_script.sh` runs the same evaluation on SLURM.
-
-The persistence, dilation and cellular-automata baselines are implemented in [`src/baselines/`](src/baselines).
-
-## 🔬 Analyses (Section 5)
+### Analyses (Section 5)
 
 ```bash
-python -m src.evaluation.run_analysis --config configs/default.yaml
+python -m src.evaluation.run_analysis --analysis <analysis> --architecture <arch> --checkpoint_dir benchmark_models_checkpoints
+# optional: --runs 1 2 3  --device cuda  --metadata_folder <dir>  --output <file>.csv
 ```
 
-runs the generalization analysis (fire size, fire duration, month, year and province; Tables 7, 8 and C.3) and the spatial error analysis (boundary and spread-distance F1; Figure 4 and Appendix C.4) for `model.architecture` (`unet`, `unet_olmo_offline` or `utae`). It reads the three runs from `checkpoints_<architecture>/run_<N>/best_checkpoint.pt` and needs the metadata JSONs from `metadata_generator_main` (see [Option 2](#option-2-generate-samples-from-the-raw-data)). The label-variation analysis (Table 9) is in `src/evaluation/variation_analysis.py`.
+| `--analysis` | Paper | Test data | Extra files |
+|---|---|---|---|
+| `generalization` | Tables 7, 8 and C.3: fire size, fire age, month (Test-Hard), year (Test-Medium), province (Test-Easy + Test-Hard) | as listed | metadata JSONs |
+| `spatial` | Figure 4, Appendix C.4: boundary F1 (90/180/270 m) and spread-distance F1 | combined test sets | – |
+| `variation` | Table 9: original, 1-pixel dilated and 3-day merged labels | combined test sets | `<split>_temporal_labels/` |
+
+Each run writes `<analysis>_<arch>.csv` (mean and std over runs) and `<analysis>_<arch>.runs.csv` (per run). See [Generating the samples](#generating-the-samples-from-the-fire-cubes) for the extra files.
 
 ## Repository structure
 
 ```text
-├── main.py              # Train and test a model
-├── configs/             # settings.py (paths) and YAML training configs
-├── data_preparation/    # Build the raw per-fire .h5 files from the original sources
-├── samples_generation/  # Build the .npz samples and metadata from the raw data
-├── src/                 # Data loaders, models, training, evaluation, baselines and analyses
-├── scripts/             # Multi-run training, evaluation and SLURM scripts
-├── notebooks/           # Walkthrough of the representative sample (downloaded from Hugging Face)
-├── legacy/              # Earlier experiments (single test split, cluster-based splits, logistic regression); not used in the paper
+├── main.py              # Train and test one model
+├── configs/             # settings.py (paths) and default.yaml (hyper-parameters)
+├── data_preparation/    # Build the per-fire .h5 cubes from the original sources
+├── samples_generation/  # Build the .npz samples, metadata and relaxed labels from the cubes
+├── src/
+│   ├── features.py      # The 50 input channels
+│   ├── data.py          # Dataset and splits
+│   ├── builder.py       # Architecture registry, model construction, checkpoint lookup
+│   ├── train.py, trainer.py, losses.py, metrics.py
+│   ├── evaluate.py      # Benchmark evaluation
+│   ├── baselines/       # Persistence, dilation and cellular automata
+│   ├── evaluation/      # Section 5 analyses
+│   └── models/
+├── scripts/             # Multi-seed training and SLURM scripts
+├── notebooks/           # Walkthrough of the representative sample
+├── legacy/              # Earlier, unmaintained experiments (not used in the paper)
 └── figures/
 ```
 

@@ -3,7 +3,13 @@
 # SEED
 RANDOM_SEED = 42
 
-# SIMPLE/TIMESERIES 
+# SIMPLE/TIMESERIES
+
+# Encoding of the released samples: the fire state is the cumulative burned area up to day T
+# (``use_cumuarea_prev``) and aspect is split into sin/cos channels.
+USE_CUMUAREA = False
+USE_CUMUAREA_PREV = True
+USE_CYCLICAL_ASPECT = True
 
 DYNAMIC_FEATURES = ['tmax', 'rh', 'ws', 'prec', 'u10', 'v10', 'evi', 'ndvi', # WEATHER
                      's2_b02', 's2_b03', 's2_b04', 's2_b08', 's2_b11', 's2_b12' # SENTINEL-2
@@ -20,8 +26,8 @@ STATIC_FEATURES = ['dem', 'slope', 'aspect', #TOPOGRAPHY
                    'ccrs_landcover',
                    # HUMAN INFLUENCE INDEX
                    'hii',
-                   # CANLAD DISTURBANCE
-                   'annual_disturbance'
+                   # NBAC WILDFIRE HISTORY (binary channel 'nbac_wildfire_history')
+                   'annual_disturbance_nbac'
                    ]
 
 TARGET_YEARS =  ['2017', '2018', '2019', '2020', '2021', '2022', '2023', '2024']

@@ -1,46 +1,26 @@
+"""Dilation baseline: uniform spread of the day-T fire by a fixed number of pixels."""
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
+from torch import nn
+
+from src.baselines import to_logits
+from src.features import FIRE_MASK_CHANNEL
+
 
 class DilationBaselineModel(nn.Module):
-    def __init__(self, fire_mask_channel_idx: int = -2, kernel_size: int = 3):
-        """
-        A baseline model that predicts new growth by expanding the previous day's 
-        fire mask outward uniformly and subtracting the original mask.
-        
-        Args:
-            fire_mask_channel_idx: The channel index in `input_grids` containing the t-1 mask.
-            kernel_size: Size of the dilation neighborhood. 
-                         3 expands by 1 pixel outward. 
-                         5 expands by 2 pixels outward, etc.
-        """
+    """Dilates the day-T fire mask and predicts the ring of new pixels.
+
+    Args:
+        fire_mask_channel: Channel of the day-T fire mask in ``x``.
+        kernel_size: Size of the square dilation window (3 = one pixel / 90 m in every direction).
+    """
+
+    def __init__(self, fire_mask_channel: int = FIRE_MASK_CHANNEL, kernel_size: int = 3) -> None:
         super().__init__()
-        self.fire_mask_channel_idx = fire_mask_channel_idx
+        self.fire_mask_channel = fire_mask_channel
         self.kernel_size = kernel_size
-        self.padding = kernel_size // 2
 
     def forward(self, x: torch.Tensor, **kwargs) -> torch.Tensor:
-        """
-        Extracts the previous day's mask, dilates it, and isolates the expansion ring.
-        
-        Args:
-            x: Input tensor of shape (Batch, Channels, Height, Width)
-        Returns:
-            Tensor of shape (Batch, 1, Height, Width) representing the predicted new growth.
-        """
-        # Extract the t-1 fire mask
-        prev_mask = x[:, self.fire_mask_channel_idx : self.fire_mask_channel_idx + 1, :, :]
-        
-        # Dilate the mask (max pooling over a binary mask expands the 1s)
-        dilated_mask = F.max_pool2d(
-            prev_mask, 
-            kernel_size=self.kernel_size, 
-            stride=1, 
-            padding=self.padding
-        )
-        
-        # Isolate the growth ring by subtracting the original fire area
-        # F.relu ensures no negative values if there are any formatting anomalies
-        new_growth_prediction = F.relu(dilated_mask - prev_mask)
-
-        return new_growth_prediction
+        fire = (x[:, self.fire_mask_channel : self.fire_mask_channel + 1] > 0).float()
+        dilated = F.max_pool2d(fire, self.kernel_size, stride=1, padding=self.kernel_size // 2)
+        return to_logits((dilated - fire) > 0)

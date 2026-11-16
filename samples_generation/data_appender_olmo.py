@@ -1,66 +1,27 @@
-import os
+"""Append offline OlmoEarth-v1.2-Base embeddings (key ``olmo_emb``, ``(768, 16, 16)``) to samples.
+
+Needed by the ``unet_olmo_offline`` (OlmoEarth) model. The Sentinel-2 bands of each sample are
+rescaled to reflectance x 10,000, zero-padded to the 12 bands OlmoEarth expects and encoded
+with the acquisition date of the image (fire date minus ``delta_t``). Files are updated in place.
+
+Requires ``olmoearth_pretrain`` (see the README)::
+
+    python -m samples_generation.data_appender_olmo --folder <mono_temporal_samples>
+"""
+import argparse
 import glob
-import numpy as np
-import torch
-from tqdm import tqdm
+import os
 from datetime import datetime, timedelta
 
-from configs import settings
-from src.utils import resolve_split_dir
-from olmoearth_pretrain.model_loader import ModelID, load_model_from_id
+import numpy as np
+import torch
 from olmoearth_pretrain.datatypes import MaskedOlmoEarthSample, MaskValue
+from olmoearth_pretrain.model_loader import ModelID, load_model_from_id
+from tqdm import tqdm
 
-# ---------------------------------------------------------
-# FEATURE MAPPING CONFIGURATION
-# ---------------------------------------------------------
-FULL_FEATURES = [
-    # --- DYNAMIC FEATURES (14) ---
-    'tmax', 'rh', 'ws', 'prec', 'u10', 'v10', 'evi', 'ndvi', 
-    's2_b02', 's2_b03', 's2_b04', 's2_b08', 's2_b11', 's2_b12',
-    
-    # --- STATIC FEATURES (Topography) (4) ---
-    'dem', 'slope', 'aspect (sin)', 'aspect (cos)',     
-    
-    # --- STATIC FEATURES (SCANFI) (13) ---
-    'biomass', 'closure', 'prcb', 'prcc',
-    'height',
-    'prc_balsam_fir', 'prc_black_spruce', 'prc_douglas_fir', 'prc_jack_pine',
-    'prc_lodgepole_pine', 'prc_ponderosa_pine', 'prc_tamarack', 'prc_white_red_pine',
-    
-    # --- CCRS LANDCOVER (15) ---
-    'ccrs_1_needleleaf', 
-    'ccrs_2_taiga_needleleaf', 
-    'ccrs_5_broadleaf', 
-    'ccrs_6_mixed_forest', 
-    'ccrs_8_shrubland', 
-    'ccrs_10_grassland', 
-    'ccrs_11_polar_shrubland', 
-    'ccrs_12_polar_grassland', 
-    'ccrs_13_polar_barren', 
-    'ccrs_14_wetland', 
-    'ccrs_15_cropland', 
-    'ccrs_16_barren', 
-    'ccrs_17_urban', 
-    'ccrs_18_water', 
-    'ccrs_19_snow',
-
-    # --- HUMAN INFLUENCE INDEX (1) ---
-    'hii',
-
-    # --- ANNUAL DISTURBANCE (6) ---
-    'dist_1_wildfire', 
-    'dist_2_harvesting', 
-    'dist_3_other', 
-    'dist_4_water', 
-    'dist_5_defoliation_harvest', 
-    'dist_6_defoliation_all',
-    
-    # --- FIRE MASKS (2) ---
-    'accumulated_mask', 'scaled_accumulated_mask'
-]
-
-# Represents the 6 Sentinel-2 channels available in the dataset
-SATELLITE_FEATURES = ['s2_b02', 's2_b03', 's2_b04', 's2_b08', 's2_b11', 's2_b12']
+from configs import settings
+from src.data import SPLITS, resolve_split_dir
+from src.features import FEATURE_NAMES as FULL_FEATURES, SENTINEL2_FEATURES as SATELLITE_FEATURES
 
 # The 12-band order OlmoEarth v1.2 expects
 OLMO_S2_ORDER = [
@@ -81,12 +42,9 @@ def generate_offline_olmo_embeddings(data_folder: str):
     model = model.to(device)
     model.eval()
     
-    # Process each split
-    # splits = ['train', 'val', 'test']
-    splits = ['train', 'val', 'test_easy', 'test_medium', 'test_hard']
     
-    for split in splits:
-        split_dir = resolve_split_dir(data_folder, split)
+    for split in SPLITS:
+        split_dir = str(resolve_split_dir(data_folder, split))
         
         if not os.path.exists(split_dir):
             print(f"Directory {split_dir} does not exist. Skipping.")
@@ -182,8 +140,6 @@ def generate_offline_olmo_embeddings(data_folder: str):
     print("\nOffline OlmoEarth embedding generation complete!")
 
 if __name__ == "__main__":
-    
-    TARGET_FOLDER = settings.SAMPLE_FOLDER.replace("v1", "v2")
-    print(f'Target folder : {TARGET_FOLDER}')
-    
-    generate_offline_olmo_embeddings(TARGET_FOLDER)
+    parser = argparse.ArgumentParser(description="Append OlmoEarth embeddings to DailyWildfireCAN samples.")
+    parser.add_argument("--folder", default=settings.SAMPLE_FOLDER, help="Folder containing the split folders.")
+    generate_offline_olmo_embeddings(parser.parse_args().folder)

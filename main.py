@@ -1,36 +1,38 @@
+"""Train one model and evaluate it on Test-Easy, Test-Medium and Test-Hard.
+
+Example::
+
+    python main.py --config configs/default.yaml --arch unet_time_gap
+"""
 import argparse
 
+from src.builder import canonical_architecture
 from src.config import Config
-from src.train import train
-from src.test import test
-from pathlib import Path
+from src.train import test, train
+
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Wildfire segmentation — entry point.")
-    parser.add_argument("--config", type=str, default="configs/default.yaml", help="Path to YAML config file.")
+    parser = argparse.ArgumentParser(description="Train and test a DailyWildfireCAN model.")
+    parser.add_argument("--config", default="configs/default.yaml", help="YAML config file.")
+    parser.add_argument("--arch", default=None, help="Override model.architecture.")
+    parser.add_argument("--epochs", type=int, default=None, help="Override training.num_epochs.")
+    parser.add_argument("--checkpoint_dir", default=None,
+                        help="Override training.checkpoint_dir (default with --arch: checkpoints_<arch>).")
     args = parser.parse_args()
 
     config = Config.from_yaml(args.config)
-    trainer, test_space_loader, test_time_loader, test_spacetime_loader = train(config)
+    if args.arch is not None:
+        config.model.architecture = canonical_architecture(args.arch)
+        config.training.checkpoint_dir = f"checkpoints_{config.model.architecture}"
+        config.comet.experiment_name = config.model.architecture
+    if args.checkpoint_dir is not None:
+        config.training.checkpoint_dir = args.checkpoint_dir
+    if args.epochs is not None:
+        config.training.num_epochs = args.epochs
 
-    # Run Testing
-    checkpoint_dir = Path(config.training.checkpoint_dir)
-    best_checkpoint = checkpoint_dir / "best_checkpoint.pt"
-    
-    if best_checkpoint.exists():
-        print(f"\n--- Starting Final Test Evaluation with {best_checkpoint} ---")        
-        # Run test
-        print('TEST-SPACE')
-        test(trainer, best_checkpoint, test_space_loader, generate_image=False)
-        print('\n')
-        print('TEST-TIME')
-        test(trainer, best_checkpoint, test_time_loader, generate_image=False)
-        print('\n')
-        print('TEST-SPACETIME')
-        test(trainer, best_checkpoint, test_spacetime_loader, generate_image=True)
-        print('\n')
-    else:
-        print("No best_checkpoint.pt found to test.")
+    trainer, loaders = train(config)
+    test(trainer, loaders)
+
 
 if __name__ == "__main__":
     main()

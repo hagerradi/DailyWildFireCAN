@@ -14,6 +14,11 @@ env/
 
 # Checkpoints & outputs
 checkpoints/
+checkpoints_*/
+benchmark_models_checkpoints/
+logs/
+*_results.csv
+*.runs.csv
 logistic_regression_outputs/
 logistic_regression_cache/
 logreg_*.out

@@ -1,17 +1,19 @@
-# Legacy code
+# Legacy code (unmaintained)
 
 Earlier experimental pipelines kept for reference. They are **not** used for the paper results or the released [dataset](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN) and [benchmark](https://huggingface.co/DailyWildfireCAN/DailyWildfireCAN-Benchmark), which use the main pipeline (`main.py`, `src/`, `samples_generation/`) with the Test-Easy, Test-Medium and Test-Hard splits.
 
-| Pipeline | Files | Samples folder (`configs/settings.py`) |
+| Pipeline | Files | Samples folder |
 |---|---|---|
-| Single test split (stratified train/val/test) | `main.py`, `parallel_main.py`, `train.py`, `dataloader.py`, `dataloader_timeseries.py`, `samples_generation/data_generator*.py` | `LEGACY_SAMPLE_FOLDER`, `LEGACY_TIMESERIES_SAMPLE_FOLDER` |
-| Cluster-based splits | `main_clusters.py`, `train_clusters.py`, `dataloader_clusters.py`, `samples_generation/clusters_generation/` | `SAMPLE_FOLDER_CLUSTERS`, `TIMESERIES_SAMPLE_FOLDER_CLUSTERS` |
+| Single test split (stratified train/val/test) | `main.py`, `parallel_main.py`, `train.py`, `dataloader.py`, `dataloader_timeseries.py`, `samples_generation/data_generator*.py` | `LEGACY_SAMPLE_FOLDER`, `LEGACY_TIMESERIES_SAMPLE_FOLDER` (`configs/settings.py`) |
+| Cluster-based splits | `main_clusters.py`, `train_clusters.py`, `dataloader_clusters.py`, `samples_generation/clusters_generation/` | `SAMPLE_FOLDER_CLUSTERS`, `TIMESERIES_SAMPLE_FOLDER_CLUSTERS` (`configs/settings.py`) |
+| Logistic-regression baseline (not in the paper; expects an older 25-channel sample layout) | `logistic_regression_main.py`, `baselines/logistic_regression.py`, `configs/logistic_regression*.yaml`, `slurm_logistic_regression.sbatch` | `WILDFIRE_SAMPLE_FOLDER` or `data.sample_folder` |
 
-Run them from the project root, for example:
+These pipelines are frozen and may not run against the current `src/` modules. To use them, restore the last commit where they ran unchanged:
 
 ```bash
-python -m legacy.samples_generation.data_generator_main --config configs/default.yaml --type simple
+git checkout 1e215b3 -- src/
 python -m legacy.main --config configs/default.yaml
+python -m legacy.logistic_regression_main --config legacy/configs/logistic_regression.yaml
 ```
 
 ## Logistic regression baseline

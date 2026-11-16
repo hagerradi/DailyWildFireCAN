@@ -1,10 +1,14 @@
-"""
-Configuration dataclasses and loader from YAML files.
+"""Experiment configuration (YAML -> dataclasses).
+
+See ``configs/default.yaml`` for the values used in the paper. Unknown YAML keys are
+ignored with a warning so that older config files still load.
 """
 from __future__ import annotations
 
+import warnings
+
 import yaml
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 
 
@@ -12,12 +16,12 @@ from pathlib import Path
 class DatasetConfig:
     height: int = 256
     width: int = 256
-    channels: int = 20
+    channels: int = 50
     num_classes: int = 1
 
 @dataclass
 class ModelConfig:
-    input_channels: int = 20
+    input_channels: int = 50
     num_classes: int = 1
     hidden_features: list[int] = field(default_factory=lambda: [64, 128, 256, 512])
     use_skip_connections: bool = True
@@ -36,23 +40,13 @@ class ModelConfig:
 @dataclass
 class TrainingConfig:
     batch_size: int = 16
-    num_epochs: int = 1
+    num_epochs: int = 20
     learning_rate: float = 1e-3
     weight_decay: float = 1e-4
-    train_split: float = 0.7
-    val_split: float = 0.15
-    test_split: float = 0.15
     num_workers: int = 4
     device: str = "auto"
     checkpoint_dir: str = "checkpoints"
     log_interval: int = 10
-    use_cumuarea: bool = False
-    use_cumuarea_prev: bool = True
-    downscale: bool = False
-    downscale_factor: int = 1
-    smooth_mask: bool = True
-    smooth_kernel: int = 3
-    use_cyclical_aspect: bool = True
 
 
 @dataclass
@@ -85,9 +79,19 @@ class Config:
         with open(path, "r") as f:
             raw = yaml.safe_load(f) or {}
 
-        seed = raw.get("seed", 42)
-        dataset_cfg = DatasetConfig(**raw.get("dataset", {}))
-        model_cfg = ModelConfig(**raw.get("model", {}))
-        training_cfg = TrainingConfig(**raw.get("training", {}))
-        comet_cfg = CometConfig(**raw.get("comet", {}))
-        return cls(seed=seed, dataset=dataset_cfg, model=model_cfg, training=training_cfg, comet=comet_cfg)
+        return cls(
+            seed=raw.get("seed", 42),
+            dataset=_build(DatasetConfig, raw.get("dataset"), "dataset"),
+            model=_build(ModelConfig, raw.get("model"), "model"),
+            training=_build(TrainingConfig, raw.get("training"), "training"),
+            comet=_build(CometConfig, raw.get("comet"), "comet"),
+        )
+
+
+def _build(cls, values: dict | None, section: str):
+    values = dict(values or {})
+    known = {f.name for f in fields(cls)}
+    unknown = sorted(set(values) - known)
+    if unknown:
+        warnings.warn(f"Ignoring unknown '{section}' config keys: {unknown}", stacklevel=3)
+    return cls(**{k: v for k, v in values.items() if k in known})
