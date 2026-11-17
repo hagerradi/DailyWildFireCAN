@@ -112,20 +112,7 @@ To switch between architectures (which will automatically configure the correspo
 5. **A Multi-Modal Architecture** (`architecture: 'frp'`): 
    A CNN-based multibranch architecture inspired by (Dong et al., 2024), with separate branches for daily weather variables, fire progression sequences, and static features such topography and land cover, followed by late fusion.
 
-#### References
-   Cao, H., Wang, Y., Chen, J., Jiang, D., Zhang, X., Tian, Q., & Wang, M. (2022, October). Swin-unet: Unet-like pure transformer for medical image segmentation. In *European Conference on Computer Vision* (pp. 205–218). Cham: Springer Nature Switzerland.
-
-   Ma, J., Li, F., & Wang, B. (2024). U-mamba: Enhancing long-range dependency for biomedical image segmentation. arXiv preprint arXiv:2401.04722.
-
-   Herzog, H., Bastani, F., Zhang, Y., Tseng, G., Redmon, J., Sablon, H., ... & Beukema, P. (2026). Olmoearth: Stable latent image modeling for multimodal earth observation. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (pp. 34806-34817).
-
-   Siméoni, O., Vo, H. V., Seitzer, M., Baldassarre, F., Oquab, M., Jose, C., ... & Bojanowski, P. (2025). Dinov3. arXiv preprint arXiv:2508.10104.
-
-   Tan, C., Gao, Z., Li, S., & Li, S. Z. (2025). SimVPv2: Towards simple yet powerful spatiotemporal predictive learning. IEEE Transactions on Multimedia, 27, 5170-5184.
-
-   Srivastava, M., Saha, E., & Wang, H. (2026). Spatio-Temporal Wildfire Spread Prediction in Canada using a Video Swin-Hybrid-U-Net and Satellite Imagery. arXiv preprint arXiv:2606.20693.
-
-   Dong, Z., Zhao, F., Wang, G., Tian, Y., & Li, H. (2024). A deep learning framework: Predicting fire radiative power from the combination of polar-orbiting and geostationary satellite data during wildfire spread. IEEE Journal of Selected Topics in Applied Earth Observations and Remote Sensing, 17, 10827-10841.
+Full references for the cited models are given in the [paper](https://arxiv.org/abs/2611.14207).
 
 ### Training the Model
 The main entry point for the training pipeline is `main.py`, located at the root of the project. 
