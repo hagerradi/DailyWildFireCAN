@@ -21,6 +21,8 @@ from torchmetrics.classification import (
     BinaryPrecisionRecallCurve
 )
 from sklearn.metrics import auc
+
+from src.trainer import Trainer
 from tqdm import tqdm
 import numpy as np
 
@@ -84,17 +86,22 @@ class Evaluator:
         with torch.no_grad():
             for batch_idx, batch in enumerate(pbar):
                 
-                images, labels = batch[0], batch[1]
-                
-                images: Tensor = images.to(self.device)
-                labels: Tensor = labels.long().to(self.device)
-
-                if len(batch) == 3:
-                    delta_t = batch[2]
-                    delta_t = delta_t.to(self.device)
-                    predictions = self.model(images, delta_t)
+                if isinstance(batch, dict):
+                    # Same input routing as training/validation
+                    labels: Tensor = batch["label"].long().to(self.device)
+                    predictions = Trainer._forward_pass(self, batch)
                 else:
-                    predictions = self.model(images)
+                    images, labels = batch[0], batch[1]
+
+                    images: Tensor = images.to(self.device)
+                    labels: Tensor = labels.long().to(self.device)
+
+                    if len(batch) == 3:
+                        delta_t = batch[2]
+                        delta_t = delta_t.to(self.device)
+                        predictions = self.model(images, delta_t)
+                    else:
+                        predictions = self.model(images)
 
                 loss: Tensor = self.loss_fn(predictions, labels)
                 total_loss += loss.item()

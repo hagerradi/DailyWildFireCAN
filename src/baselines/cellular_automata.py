@@ -5,7 +5,7 @@ import json
 import argparse
 
 from src.config import Config
-from src.dataloader_advanced import get_advanced_dataloaders
+from src.dataloader import get_dataloaders
 
 class AlexandridisCA(nn.Module):
     def __init__(self, feature_names, stats_json, p_0=0.3, c_1=0.045, c_2=0.131, a_s=0.078):
@@ -187,7 +187,7 @@ def run_ca_dummy_test():
     ).to(device)
     ca_model.eval()
     
-    _, _, _, _, test_spacetime_loader = get_advanced_dataloaders(config, is_sat_age=False)
+    _, _, _, _, test_spacetime_loader = get_dataloaders(config, is_sat_age=False)
     print(len(test_spacetime_loader))
     
     print("\nGrabbing one batch from the dataloader...")

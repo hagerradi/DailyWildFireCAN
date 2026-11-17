@@ -1,1 +1,1 @@
-"""Classical baselines for CanadaWildFireDaily."""
+"""Classical baselines for DailyWildfireCAN."""

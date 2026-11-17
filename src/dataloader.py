@@ -3,6 +3,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from configs import settings
 from src.config import Config
+from src.utils import resolve_split_dir
 from skimage import morphology
 import numpy as np
 
@@ -44,7 +45,7 @@ class DailyFireDataset(Dataset):
             x_np = data['x']
             y_np = data['y'] 
 
-            # Conditionally load
+            # Conditionally load to prevent KeyErrors on older datasets
             if self.return_sat_age and 'delta_t' in data:
                 delta_t_np = data['delta_t']
                 has_delta = True
@@ -107,7 +108,7 @@ def get_dataloaders(config: Config,
                     is_coords: bool = False, 
                     is_loc_emb: bool = False, 
                     is_olmo_emb: bool = False,
-                    is_alpha_emb: bool = False) -> tuple[DataLoader, DataLoader, DataLoader]:
+                    is_alpha_emb: bool = False) -> tuple[DataLoader, DataLoader, DataLoader, DataLoader, DataLoader]:
     """Instantiates the offline datasets and wraps them in PyTorch DataLoaders.
 
     Args:
@@ -127,16 +128,35 @@ def get_dataloaders(config: Config,
     # Define the paths to the precomputed splits
     train_dir = os.path.join(base_data_path, "train")
     val_dir = os.path.join(base_data_path, "val")
-    test_dir = os.path.join(base_data_path, "test")
+    test_time_dir = resolve_split_dir(base_data_path, "test_easy")
+    test_space_dir = resolve_split_dir(base_data_path, "test_medium")
+    test_spacetime_dir = resolve_split_dir(base_data_path, "test_hard")
+    
+    # test_space_dir = os.path.join(base_data_path, "test_space")
+    # test_time_dir = os.path.join(base_data_path, "test_time")
+    # test_spacetime_dir = os.path.join(base_data_path, "test_spacetime")
+
+    # Refactor dataset arguments
+    dataset_kwargs = {
+        "return_sat_age": is_sat_age,
+        "return_coords": is_coords,
+        "return_loc_emb": is_loc_emb,
+        "return_olmo_emb": is_olmo_emb,
+        "return_alpha_emb": is_alpha_emb
+    }
 
     # Instantiate the datasets, passing the sat_age flag
-    train_dataset = DailyFireDataset(train_dir, return_sat_age=is_sat_age, return_coords=is_coords, return_loc_emb=is_loc_emb, return_olmo_emb=is_olmo_emb, return_alpha_emb=is_alpha_emb)
-    val_dataset = DailyFireDataset(val_dir, return_sat_age=is_sat_age, return_coords=is_coords, return_loc_emb=is_loc_emb, return_olmo_emb=is_olmo_emb, return_alpha_emb=is_alpha_emb)
-    test_dataset = DailyFireDataset(test_dir, return_sat_age=is_sat_age, return_coords=is_coords, return_loc_emb=is_loc_emb, return_olmo_emb=is_olmo_emb, return_alpha_emb=is_alpha_emb)
+    train_dataset = DailyFireDataset(train_dir, **dataset_kwargs)
+    val_dataset = DailyFireDataset(val_dir, **dataset_kwargs)
+    test_space_dataset = DailyFireDataset(test_space_dir, **dataset_kwargs)
+    test_time_dataset = DailyFireDataset(test_time_dir, **dataset_kwargs)
+    test_spacetime_dataset = DailyFireDataset(test_spacetime_dir, **dataset_kwargs)
 
     print(f'Number of offline training samples   :: {len(train_dataset)}')
     print(f'Number of offline validation samples :: {len(val_dataset)}')
-    print(f'Number of offline test samples       :: {len(test_dataset)}')
+    print(f'Number of offline test-space samples       :: {len(test_space_dataset)}')
+    print(f'Number of offline test-time samples       :: {len(test_time_dataset)}')
+    print(f'Number of offline test-spacetime samples       :: {len(test_spacetime_dataset)}')
 
     # ---------------------------------------------------------
     # VERIFICATION
@@ -144,7 +164,7 @@ def get_dataloaders(config: Config,
     print('\n--- Verification of Sample 0 ---')
     
     # Safely grab x
-    sample_data = test_dataset[0]
+    sample_data = test_spacetime_dataset[0]
     x = sample_data['input_grids']
     print(f'Input Tensor Shape : {x.shape}')
 
@@ -204,15 +224,31 @@ def get_dataloaders(config: Config,
         persistent_workers=False
     )
     
-    test_loader = DataLoader(
-        test_dataset, 
+    test_space_loader = DataLoader(
+        test_space_dataset, 
         batch_size=tc.batch_size, 
         shuffle=False,
         num_workers=tc.num_workers,
         persistent_workers=False   
     )
 
-    return train_loader, val_loader, test_loader
+    test_time_loader = DataLoader(
+        test_time_dataset, 
+        batch_size=tc.batch_size, 
+        shuffle=False,
+        num_workers=tc.num_workers,
+        persistent_workers=False   
+    )
+
+    test_spacetime_loader = DataLoader(
+        test_spacetime_dataset, 
+        batch_size=tc.batch_size, 
+        shuffle=False,
+        num_workers=tc.num_workers,
+        persistent_workers=False   
+    )
+    
+    return train_loader, val_loader, test_space_loader, test_time_loader, test_spacetime_loader
 
 if __name__ == "__main__":
     

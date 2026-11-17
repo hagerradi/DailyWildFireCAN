@@ -53,7 +53,7 @@ def setup_evaluation(config: Config, architecture: str):
     
     # Setup Dataloaders & Model based on architecture
     if mc.architecture == 'unet':
-        _, _, test_loader = get_dataloaders(config, is_sat_age=False)
+        _, _, *test_loaders = get_dataloaders(config, is_sat_age=False)
 
         model = unet.UNet(
             input_channels=mc.input_channels,
@@ -65,7 +65,7 @@ def setup_evaluation(config: Config, architecture: str):
         
     elif mc.architecture == 'unet_attention':
 
-        _, _, test_loader = get_dataloaders(config, is_sat_age=False)
+        _, _, *test_loaders = get_dataloaders(config, is_sat_age=False)
 
         model = unet_attention.AttentionUNet(
             input_channels=mc.input_channels,
@@ -78,7 +78,7 @@ def setup_evaluation(config: Config, architecture: str):
         
     elif mc.architecture == 'unet_time_gap':
 
-        _, _, test_loader = get_dataloaders(config, is_sat_age=True)
+        _, _, *test_loaders = get_dataloaders(config, is_sat_age=True)
 
         model = unet_time_gap.UNet(
             input_channels=mc.input_channels,
@@ -90,7 +90,7 @@ def setup_evaluation(config: Config, architecture: str):
         
     elif mc.architecture == 'unet_convlstm':
 
-        _, _, test_loader = get_timeseries_dataloaders(config, return_positions=False)
+        _, _, *test_loaders = get_timeseries_dataloaders(config, return_positions=False)
 
         model = unet_convlstm.SpatiotemporalUNet(
             input_channels=mc.input_channels,
@@ -100,7 +100,7 @@ def setup_evaluation(config: Config, architecture: str):
         )
         
     elif mc.architecture == 'unet_segformer':
-        _, _, test_loader = get_dataloaders(config, is_sat_age=False)
+        _, _, *test_loaders = get_dataloaders(config, is_sat_age=False)
 
         model = unet_segformer.UNetSegFormer(
             in_channels=mc.input_channels,
@@ -108,7 +108,7 @@ def setup_evaluation(config: Config, architecture: str):
         )
     
     elif mc.architecture == 'utae':
-        _, _, test_loader = get_timeseries_dataloaders(
+        _, _, *test_loaders = get_timeseries_dataloaders(
             config,
             return_positions=True,
         )
@@ -128,6 +128,9 @@ def setup_evaluation(config: Config, architecture: str):
 
     else:
         raise ValueError(f"Unknown architecture: '{mc.architecture}'")
+
+    # Loaders are returned as (test_space, test_time, test_spacetime) = (medium, easy, hard)
+    test_loaders = dict(zip(("test_medium", "test_easy", "test_hard"), test_loaders))
 
     # Setup Loss
     device = Evaluator._resolve_device(config.training.device)
@@ -152,7 +155,7 @@ def setup_evaluation(config: Config, architecture: str):
         logger=None
     )
     
-    return evaluator, test_loader
+    return evaluator, test_loaders
 
 def main():
 
@@ -193,14 +196,17 @@ def main():
         config = Config.from_yaml(current_config_path)
         
         # Setup the environment once per architecture
-        evaluator, test_loader = setup_evaluation(config, arch)
+        evaluator, test_loaders = setup_evaluation(config, arch)
         
         # Iterate over the 3 runs
         for run in runs:
             # Construct folder name: e.g., checkpoints_unet_run1
+            # The released Hugging Face checkpoints use checkpoints_unet_run_1 instead.
             folder_name = f"checkpoints_{arch}_run{run}"
-
             ckpt_path = os.path.join(checkpoint_base_dir, folder_name, "best_checkpoint.pt")
+            if not os.path.exists(ckpt_path):
+                folder_name = f"checkpoints_{arch}_run_{run}"
+                ckpt_path = os.path.join(checkpoint_base_dir, folder_name, "best_checkpoint.pt")
             
             if not os.path.exists(ckpt_path):
                 print(f"[!] Warning: Checkpoint not found at {ckpt_path}. Skipping.")
@@ -210,22 +216,23 @@ def main():
             print(f"\n--- Loading {folder_name} ---")
             epoch = evaluator.load_checkpoint(ckpt_path)
             
-            # Run Evaluation
-            test_loss, test_metrics = evaluator.evaluate(test_loader)
+            for split in ("test_easy", "test_medium", "test_hard"):
+                print(f"\n[{split}]")
+                test_loss, test_metrics = evaluator.evaluate(test_loaders[split])
 
-            for metric_name, value in test_metrics.items():
-                print(f"{metric_name}: {value:.4f}")
-            
-            # Store metrics
-            result_dict = {
-                "architecture": arch,
-                "run": run,
-                "epoch_loaded": epoch,
-                "test_loss": test_loss,
-            }
-            # Unpack all metrics (e.g., IoU, F1) into the dict
-            result_dict.update(test_metrics) 
-            all_results.append(result_dict)
+                for metric_name, value in test_metrics.items():
+                    print(f"{metric_name}: {value:.4f}")
+
+                result_dict = {
+                    "architecture": arch,
+                    "run": run,
+                    "split": split,
+                    "epoch_loaded": epoch,
+                    "test_loss": test_loss,
+                }
+                # Unpack all metrics (e.g., IoU, F1) into the dict
+                result_dict.update(test_metrics)
+                all_results.append(result_dict)
 
     # Save results to a clean CSV
     if all_results:

@@ -11,8 +11,7 @@ def main() -> None:
     args = parser.parse_args()
 
     config = Config.from_yaml(args.config)
-    trainer, test_loader = train(config)
-
+    trainer, test_space_loader, test_time_loader, test_spacetime_loader = train(config)
 
     # Run Testing
     checkpoint_dir = Path(config.training.checkpoint_dir)
@@ -21,7 +20,15 @@ def main() -> None:
     if best_checkpoint.exists():
         print(f"\n--- Starting Final Test Evaluation with {best_checkpoint} ---")        
         # Run test
-        test(trainer, best_checkpoint, test_loader)
+        print('TEST-SPACE')
+        test(trainer, best_checkpoint, test_space_loader, generate_image=False)
+        print('\n')
+        print('TEST-TIME')
+        test(trainer, best_checkpoint, test_time_loader, generate_image=False)
+        print('\n')
+        print('TEST-SPACETIME')
+        test(trainer, best_checkpoint, test_spacetime_loader, generate_image=True)
+        print('\n')
     else:
         print("No best_checkpoint.pt found to test.")
 

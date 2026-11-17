@@ -1,8 +1,8 @@
 import argparse
 
 from src.config import Config
-from samples_generation.data_generator_advanced import generate_metadata_all_datasets
-from samples_generation.data_generator_advanced_timeseries import generate_timeseries_metadata_all_datasets
+from samples_generation.data_generator import generate_metadata_all_datasets
+from samples_generation.data_generator_timeseries import generate_timeseries_metadata_all_datasets
 from samples_generation.samples_configs.samples_settings import SEQUENCE_LENGTH
 
 def main():
