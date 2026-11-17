@@ -13,3 +13,27 @@ Run them from the project root, for example:
 python -m legacy.samples_generation.data_generator_main --config configs/default.yaml --type simple
 python -m legacy.main --config configs/default.yaml
 ```
+
+## Logistic regression baseline
+
+A classical logistic-regression baseline. It is separate from the PyTorch trainer, reads the mono-temporal samples from `SAMPLE_FOLDER/{train,val,test_easy,test_medium,test_hard}`, ignores `delta_t`, extracts a configurable spatial patch around each pixel, and trains `sklearn.linear_model.SGDClassifier(loss="log_loss")`.
+
+Following the approach in Next Day Wildfire Spread [Huot et al], the baseline performs search over the no-fire class-weight multiplier `W` configured in `training.w_values`. The number of SGD epochs is a fixed config input (`training.epochs`) and is not part of the hyperparameter search. The selected model is the one with the highest validation AUC-PR.
+
+```bash
+python -m legacy.logistic_regression_main --config legacy/configs/logistic_regression.yaml
+```
+
+For a quick wiring check:
+
+```bash
+python -m legacy.logistic_regression_main --config legacy/configs/logistic_regression_smoke.yaml
+```
+
+On a SLURM cluster:
+
+```bash
+sbatch legacy/slurm_logistic_regression.sbatch
+```
+
+Set `WILDFIRE_SAMPLE_FOLDER=/path/to/Samples` to avoid editing `configs/settings.py`, or set `data.sample_folder` directly in the logistic-regression config. Outputs include `w_sweep_metrics.csv/json`, `final_metrics.json`, `model.joblib`, `scaler.joblib`, and the feature manifest. Reported metrics include `auc_pr`, `average_precision` (AP), IoU, Dice/F1, precision, recall, and accuracy.

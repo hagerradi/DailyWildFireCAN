@@ -161,30 +161,6 @@ python -m src.evaluate --config configs/default.yaml
 
 On a SLURM cluster, `scripts/parallel_script.sh` trains the three runs of one architecture as an array job (`python -m scripts.parallel_main --arch <architecture> --run_id <N>`) and saves them in this layout. `scripts/evaluate_script.sh` then runs the global evaluation.
 
-### Logistic Regression Baseline
-
-This repository also includes an additive classical logistic-regression baseline. It is separate from the PyTorch trainer, reads the mono-temporal samples from `SAMPLE_FOLDER/{train,val,test_easy,test_medium,test_hard}`, ignores `delta_t`, extracts a configurable spatial patch around each pixel, and trains `sklearn.linear_model.SGDClassifier(loss="log_loss")`.
-
-Following the approach in Next Day Wildfire Spread [Huot et al], the baseline performs search over the no-fire class-weight multiplier `W` configured in `training.w_values`. The number of SGD epochs is a fixed config input (`training.epochs`) and is not part of the hyperparameter search. The selected model is the one with the highest validation AUC-PR.
-
-```bash
-python -m scripts.logistic_regression_main --config configs/logistic_regression.yaml
-```
-
-For a quick wiring check:
-
-```bash
-python -m scripts.logistic_regression_main --config configs/logistic_regression_smoke.yaml
-```
-
-On a SLURM cluster:
-
-```bash
-sbatch scripts/slurm_logistic_regression.sbatch
-```
-
-Set `WILDFIRE_SAMPLE_FOLDER=/path/to/Samples` to avoid editing `configs/settings.py`, or set `data.sample_folder` directly in the logistic-regression config. Outputs include `w_sweep_metrics.csv/json`, `final_metrics.json`, `model.joblib`, `scaler.joblib`, and the feature manifest. Reported metrics include `auc_pr`, `average_precision` (AP), IoU, Dice/F1, precision, recall, and accuracy.
-
 ## Repository structure
 
 ```text
@@ -193,9 +169,9 @@ Set `WILDFIRE_SAMPLE_FOLDER=/path/to/Samples` to avoid editing `configs/settings
 ├── data_preparation/    # Build the raw per-fire .h5 files from the original sources
 ├── samples_generation/  # Build train/val/test .npz samples from the raw data
 ├── src/                 # Dataloaders, models, training, evaluation and baselines
-├── scripts/             # Parallel-training, logistic-regression and SLURM entry points
+├── scripts/             # Parallel-training and SLURM entry points
 ├── notebooks/           # Walkthrough of the representative sample (downloaded from Hugging Face)
-├── legacy/              # Earlier experiments (single test split, cluster-based splits); not used for the paper
+├── legacy/              # Earlier experiments (single test split, cluster-based splits, logistic regression); not used for the paper
 └── figures/
 ```
 

@@ -18,7 +18,7 @@ export PYTHONUNBUFFERED=1
 export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 export MKL_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
 
-LOGREG_CONFIG="${LOGREG_CONFIG:-configs/logistic_regression.yaml}"
+LOGREG_CONFIG="${LOGREG_CONFIG:-legacy/configs/logistic_regression.yaml}"
 
 echo "Running logistic-regression baseline: ${LOGREG_CONFIG}"
 echo "Host: $(hostname)"
@@ -29,4 +29,4 @@ if [ -n "${SLURM_TMP_DIR:-}" ]; then
   df -h "${SLURM_TMP_DIR}"
 fi
 
-.venv/bin/python -u -m scripts.logistic_regression_main --config "${LOGREG_CONFIG}"
+.venv/bin/python -u -m legacy.logistic_regression_main --config "${LOGREG_CONFIG}"

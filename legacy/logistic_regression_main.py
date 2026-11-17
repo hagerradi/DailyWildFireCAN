@@ -1,6 +1,6 @@
 import argparse
 
-from src.baselines.logistic_regression import run_from_config
+from legacy.baselines.logistic_regression import run_from_config
 
 
 def main() -> None:
@@ -8,7 +8,7 @@ def main() -> None:
     parser.add_argument(
         "--config",
         type=str,
-        default="configs/logistic_regression.yaml",
+        default="legacy/configs/logistic_regression.yaml",
         help="Path to the logistic-regression YAML config.",
     )
     args = parser.parse_args()
