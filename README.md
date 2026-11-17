@@ -1,4 +1,4 @@
-# 🍁 DailyWildfireCAN: Code for Next-Day Wildfire Spread Prediction in Canada
+# 🍁 Code for DailyWildfireCAN: Next-Day Wildfire Spread Prediction in Canada
 
 [📄 Paper](https://arxiv.org/abs/2611.14207) · [🌐 Project page](https://dailywildfirecan.github.io) · [🗂️ Dataset](https://huggingface.co/datasets/DailyWildfireCAN/DailyWildfireCAN) · [🏆 Benchmark checkpoints](https://huggingface.co/DailyWildfireCAN/DailyWildfireCAN-Benchmark)
 
