@@ -10,6 +10,23 @@ import torch
 import numpy as np
 
 
+# Test folder names used by the Hugging Face archives -> names used in the paper.
+SPLIT_ALIASES = {"test_easy": "test_time", "test_medium": "test_space", "test_hard": "test_spacetime"}
+
+
+def resolve_split_dir(base_data_path: str, split: str) -> str:
+    """Path of ``split`` in ``base_data_path``, accepting both naming schemes.
+
+    ``test_easy``/``test_medium``/``test_hard`` fall back to ``test_time``/``test_space``/
+    ``test_spacetime`` (the folder names in the released archives) when only those exist.
+    """
+    path = os.path.join(base_data_path, split)
+    alias = SPLIT_ALIASES.get(split)
+    if not os.path.isdir(path) and alias and os.path.isdir(os.path.join(base_data_path, alias)):
+        return os.path.join(base_data_path, alias)
+    return path
+
+
 def seed_everything(seed: int) -> None:
     """Fix the random seed for full reproducibility across all devices and backends.
 

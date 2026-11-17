@@ -6,6 +6,7 @@ from tqdm import tqdm
 from datetime import datetime, timedelta
 
 from configs import settings
+from src.utils import resolve_split_dir
 from olmoearth_pretrain.model_loader import ModelID, load_model_from_id
 from olmoearth_pretrain.datatypes import MaskedOlmoEarthSample, MaskValue
 
@@ -82,10 +83,10 @@ def generate_offline_olmo_embeddings(data_folder: str):
     
     # Process each split
     # splits = ['train', 'val', 'test']
-    splits = ['train', 'val', 'test_space', 'test_time', 'test_spacetime']
+    splits = ['train', 'val', 'test_easy', 'test_medium', 'test_hard']
     
     for split in splits:
-        split_dir = os.path.join(data_folder, split)
+        split_dir = resolve_split_dir(data_folder, split)
         
         if not os.path.exists(split_dir):
             print(f"Directory {split_dir} does not exist. Skipping.")

@@ -3,6 +3,7 @@ import torch
 from torch.utils.data import Dataset, DataLoader
 from configs import settings
 from src.config import Config
+from src.utils import resolve_split_dir
 from skimage import morphology
 import numpy as np
 
@@ -158,9 +159,9 @@ def get_dataloaders_with_labels(config: Config,
     # Define the paths to the precomputed splits
     train_dir = os.path.join(base_data_path, "train")
     val_dir = os.path.join(base_data_path, "val")
-    test_time_dir = os.path.join(base_data_path, "test_easy")
-    test_space_dir = os.path.join(base_data_path, "test_medium")
-    test_spacetime_dir = os.path.join(base_data_path, "test_hard")
+    test_time_dir = resolve_split_dir(base_data_path, "test_easy")
+    test_space_dir = resolve_split_dir(base_data_path, "test_medium")
+    test_spacetime_dir = resolve_split_dir(base_data_path, "test_hard")
     
     # test_space_dir = os.path.join(base_data_path, "test_space")
     # test_time_dir = os.path.join(base_data_path, "test_time")
