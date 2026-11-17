@@ -34,14 +34,6 @@ H5_OUTPUT_FOLDER = f'{OUTPUT_FOLDER}/Fires_H5'
 SAMPLE_FOLDER = os.environ.get('WILDFIRE_SAMPLE_FOLDER', f'{OUTPUT_FOLDER}/Samples')
 TIMESERIES_SAMPLE_FOLDER = os.environ.get('WILDFIRE_TIMESERIES_SAMPLE_FOLDER', f'{OUTPUT_FOLDER}/Timeseries_Samples')
 
-# LEGACY SAMPLES (train, val, and a single test set), used only by legacy/
-LEGACY_SAMPLE_FOLDER = f'{OUTPUT_FOLDER}/Samples_Legacy'
-LEGACY_TIMESERIES_SAMPLE_FOLDER = f'{OUTPUT_FOLDER}/Timeseries_Samples_Legacy'
-
-# CLUSTERED SAMPLES (organized as clusters), used only by legacy/
-SAMPLE_FOLDER_CLUSTERS = f'{OUTPUT_FOLDER}/Samples_Clusters'
-TIMESERIES_SAMPLE_FOLDER_CLUSTERS = f'{OUTPUT_FOLDER}/Timeseries_Samples_Clusters'
-
 METADATA_FOLDER = f'{PROJECT_FOLDER}/fires_metadata'
 SATELLITE_STATUS_FOLDER = f'{PROJECT_FOLDER}/Satellite_Status'
 

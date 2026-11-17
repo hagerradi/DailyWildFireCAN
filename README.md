@@ -118,7 +118,7 @@ sbatch scripts/parallel_script.sh utae      # same on SLURM (array job)
 
 ### Evaluation
 
-`src.evaluate` evaluates every run of every architecture on the test splits and writes one CSV row per architecture, run and split (AUC-PR, average precision, F1, IoU, precision, recall at 0.5). To reproduce the benchmark with the released checkpoints:
+`src.evaluate` evaluates every run of every architecture on the test splits and writes one CSV row per architecture, run and split (AUC-PR, plus F1, precision and recall at a 0.5 threshold). To reproduce the benchmark with the released checkpoints:
 
 ```bash
 hf download DailyWildfireCAN/DailyWildfireCAN-Benchmark --local-dir .   # -> benchmark_models_checkpoints/
@@ -167,7 +167,6 @@ Each run writes `<analysis>_<arch>.csv` (mean and std over runs) and `<analysis>
 │   └── models/
 ├── scripts/             # Multi-seed training and SLURM scripts
 ├── notebooks/           # Walkthrough of the representative sample
-├── legacy/              # Earlier, unmaintained experiments (not used in the paper)
 └── figures/
 ```
 
